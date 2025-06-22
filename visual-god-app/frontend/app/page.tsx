@@ -1,7 +1,15 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Upload, Loader2, Download, AlertCircle, Sparkles } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react'
+
+interface GeneratedImage {
+  prompt: string
+  image_base64: string
+  image_url?: string
+  index: number
+  input_image?: string
+}
 
 interface ProcessedResult {
   success: boolean
@@ -13,8 +21,11 @@ interface ProcessedResult {
     brand_name?: string
   }>
   prompts?: string[]
-  generated_images?: string[]
+  generated_images?: GeneratedImage[]
+  has_avatar?: boolean
+  avatar_type?: string
   sessionId?: string
+  message?: string
 }
 
 export default function VisualGodApp() {
@@ -22,6 +33,7 @@ export default function VisualGodApp() {
   const [processing, setProcessing] = useState(false)
   const [result, setResult] = useState<ProcessedResult | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [generateImages, setGenerateImages] = useState(true)
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -57,6 +69,15 @@ export default function VisualGodApp() {
     setFiles(prev => prev.filter((_, i) => i !== index))
   }
 
+  const downloadImage = (image: GeneratedImage) => {
+    const link = document.createElement('a')
+    link.href = `data:image/jpeg;base64,${image.image_base64}`
+    link.download = `visual-god-enhanced-${image.index + 1}.jpg`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   const processImages = async () => {
     if (files.length === 0) return
 
@@ -81,7 +102,7 @@ export default function VisualGodApp() {
 
       const images = await Promise.all(imagePromises)
 
-      // Call API
+      // Call API with new generate_images parameter
       const response = await fetch('/api/process', {
         method: 'POST',
         headers: {
@@ -89,9 +110,14 @@ export default function VisualGodApp() {
         },
         body: JSON.stringify({
           images,
-          userId: null // Add auth later
+          userId: null,
+          generate_images: generateImages
         }),
       })
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`)
+      }
 
       const data = await response.json()
       setResult(data)
@@ -114,7 +140,7 @@ export default function VisualGodApp() {
   if (result) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
             <h1 className="text-4xl font-bold text-white mb-8 text-center flex items-center justify-center gap-3">
               <Sparkles className="w-10 h-10" />
@@ -122,7 +148,53 @@ export default function VisualGodApp() {
             </h1>
 
             {result.success ? (
-              <div className="space-y-6">
+              <div className="space-y-8">
+                {/* Generated Images - Feature prominently */}
+                {result.generated_images && result.generated_images.length > 0 && (
+                  <div className="bg-white/10 rounded-xl p-6">
+                    <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-3">
+                      <Wand2 className="w-8 h-8" />
+                      AI-Enhanced Images ({result.generated_images.length})
+                      <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">GPT-Image-1</span>
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {result.generated_images.map((image, i) => (
+                        <div key={i} className="bg-white/5 rounded-lg overflow-hidden">
+                          <div className="aspect-square relative group">
+                            <img
+                              src={`data:image/jpeg;base64,${image.image_base64}`}
+                              alt={`AI-enhanced image ${i + 1}`}
+                              className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                            />
+                            {image.input_image && (
+                              <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                                From: {image.input_image}
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-4">
+                            <p className="text-white/80 text-sm mb-3 line-clamp-3">
+                              {image.prompt}
+                            </p>
+                            <button
+                              onClick={() => downloadImage(image)}
+                              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
+                            >
+                              <Download className="w-4 h-4" />
+                              Download Enhanced
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4 text-center">
+                      <p className="text-white/60 text-sm">
+                        ✨ Images enhanced using GPT-Image-1 from your uploaded content
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Classification Results */}
                 <div className="bg-white/10 rounded-xl p-6">
                   <h2 className="text-xl font-semibold text-white mb-4">Image Classifications</h2>
@@ -143,10 +215,10 @@ export default function VisualGodApp() {
                 {result.products && result.products.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
                     <h2 className="text-xl font-semibold text-white mb-4">Detected Products</h2>
-                    <div className="space-y-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {result.products.map((product, i) => (
-                        <div key={i} className="bg-white/5 rounded-lg p-3">
-                          <p className="text-white font-medium">{product.product_name}</p>
+                        <div key={i} className="bg-white/5 rounded-lg p-4">
+                          <h3 className="text-white font-medium text-lg">{product.product_name}</h3>
                           <p className="text-white/70 text-sm">Type: {product.product_type}</p>
                           {product.brand_name && (
                             <p className="text-white/70 text-sm">Brand: {product.brand_name}</p>
@@ -160,23 +232,36 @@ export default function VisualGodApp() {
                 {/* Generated Prompts */}
                 {result.prompts && result.prompts.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
-                    <h2 className="text-xl font-semibold text-white mb-4">Generated Prompts</h2>
-                    <div className="space-y-2">
+                    <h2 className="text-xl font-semibold text-white mb-4">AI-Generated Prompts</h2>
+                    <div className="space-y-3">
                       {result.prompts.map((prompt, i) => (
-                        <div key={i} className="bg-white/5 rounded-lg p-3">
-                          <p className="text-white/90 text-sm">{prompt}</p>
+                        <div key={i} className="bg-white/5 rounded-lg p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <p className="text-white/90 text-sm flex-1">{prompt}</p>
+                            <span className="text-white/60 text-xs font-mono bg-white/10 px-2 py-1 rounded">
+                              #{i + 1}
+                            </span>
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                {/* Session Info */}
-                {result.sessionId && (
-                  <div className="bg-green-500/20 rounded-lg p-4">
-                    <p className="text-green-100">✅ Session saved: {result.sessionId.slice(0, 8)}...</p>
-                  </div>
+                {/* Avatar Info */}
+                {result.has_avatar && result.avatar_type && (
+                  <div className="bg-blue-500/20 rounded-lg p-4">
+                    <p className="text-blue-100 flex items-center gap-2">
+                      <span className="text-2xl">👤</span>
+                      Avatar detected: {result.avatar_type}
+                    </p>
+                    </div>
                 )}
+
+                {/* Success Message */}
+                <div className="bg-green-500/20 rounded-lg p-4">
+                  <p className="text-green-100">✅ {result.message}</p>
+                </div>
 
                 <button
                   onClick={reset}
@@ -211,7 +296,7 @@ export default function VisualGodApp() {
             <Sparkles className="w-10 h-10" />
             Visual God
           </h1>
-          <p className="text-white/80 text-center mb-8">AI-Powered Content Creator</p>
+          <p className="text-white/80 text-center mb-8">AI-Powered Content Creator with Image Enhancement</p>
 
           {/* Upload Area */}
           <div
@@ -257,34 +342,62 @@ export default function VisualGodApp() {
 
           {/* Process Button */}
           {files.length > 0 && (
-            <button
-              onClick={processImages}
-              disabled={processing}
-              className="w-full mt-6 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {processing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  Generate Content
-                </>
-              )}
-            </button>
+            <>
+              {/* Generate Images Toggle */}
+              <div className="mt-6 flex items-center justify-between bg-white/5 rounded-xl p-4">
+                <div>
+                  <h3 className="text-white font-medium">AI Image Enhancement</h3>
+                  <p className="text-white/60 text-sm">Create enhanced marketing images using GPT-Image-1</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={generateImages}
+                    onChange={(e) => setGenerateImages(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-purple-500 peer-checked:to-pink-500"></div>
+                </label>
+              </div>
+
+              <button
+                onClick={processImages}
+                disabled={processing}
+                className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    {generateImages ? 'Processing & Enhancing...' : 'Processing...'}
+                  </>
+                ) : (
+                  <>
+                    {generateImages ? <Wand2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                    {generateImages ? 'Analyze & Enhance Images' : 'Analyze Images Only'}
+                  </>
+                )}
+              </button>
+            </>
           )}
 
           {/* Instructions */}
           <div className="mt-8 bg-white/5 rounded-xl p-6">
-            <h3 className="text-white font-semibold mb-3">How it works:</h3>
+            <h3 className="text-white font-semibold mb-3">How Visual God works:</h3>
             <ul className="space-y-2 text-white/80 text-sm">
               <li>📸 Upload clear product images (bottles, gadgets, cosmetics, etc.)</li>
               <li>👤 Optionally add avatar images for lifestyle content</li>
               <li>🤖 AI analyzes and classifies your images</li>
               <li>✨ Get professional marketing prompts instantly</li>
+              <li>🎨 <strong>NEW:</strong> Generate enhanced marketing images using GPT-Image-1</li>
+              <li>💾 Download your enhanced images for immediate use</li>
             </ul>
+            
+            <div className="mt-4 p-3 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg border border-white/10">
+              <p className="text-white/90 text-xs">
+                <strong>GPT-Image-1</strong> uses your uploaded images as a foundation to create 
+                professional marketing visuals with enhanced lighting, composition, and style.
+              </p>
+            </div>
           </div>
         </div>
       </div>
