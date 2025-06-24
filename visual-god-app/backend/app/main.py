@@ -37,6 +37,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 🎯 UPDATED: New size configurations
+SIZE_CONFIGS = {
+    "instagram": {
+        "size": "1080x1920",
+        "label": "Instagram Reels",
+        "description": "Vertical format (9:16) for Instagram Reels",
+        "aspect_ratio": "9:16"
+    },
+    "facebook": {
+        "size": "1080x1080", 
+        "label": "Facebook Photo Ad",
+        "description": "Square format (1:1) for Facebook feed and mobile",
+        "aspect_ratio": "1:1"
+    },
+    "youtube": {
+        "size": "2560x1440",
+        "label": "YouTube Banner", 
+        "description": "Widescreen format (16:9) optimized for all devices",
+        "aspect_ratio": "16:9",
+        "safe_area": "Keep essential elements within 1546x423px"
+    }
+}
+
 # Request models
 class ImageData(BaseModel):
     base64: str
@@ -45,14 +68,16 @@ class ImageData(BaseModel):
 class ProcessRequest(BaseModel):
     images: List[ImageData]
     userId: Optional[str] = None
-    generate_images: bool = True  # New option to control image generation
+    generate_images: bool = True
+    image_size: str = "instagram"  # New field for size selection
 
 class GenerateRequest(BaseModel):
     prompts: List[str]
-    images: List[ImageData]  # Input images required for GPT-Image-1
+    images: List[ImageData]
     max_images: int = 3
+    image_size: str = "instagram"  # New field for size selection
 
-# Response models for better documentation
+# Response models
 class ProductInfo(BaseModel):
     product_name: str
     product_type: str
@@ -61,9 +86,10 @@ class ProductInfo(BaseModel):
 class GeneratedImage(BaseModel):
     prompt: str
     image_base64: str
-    image_url: Optional[str] = None  # GPT-Image-1 doesn't provide URLs
+    image_url: Optional[str] = None
     index: int
-    input_image: Optional[str] = None  # Track which input image was used
+    input_image: Optional[str] = None
+    size: Optional[str] = None  # Track the size used
 
 class ProcessResponse(BaseModel):
     success: bool
@@ -87,17 +113,26 @@ def read_root():
             "Image classification",
             "Product scanning", 
             "AI prompt generation",
-            "DALL-E 3 image generation"
-        ]
+            "Multi-platform image generation",
+            "Instagram Reels, Facebook Ads, YouTube Banners"
+        ],
+        "supported_sizes": SIZE_CONFIGS
     }
 
 @app.post("/api/process", response_model=ProcessResponse)
 async def process_images(request: ProcessRequest):
     """
-    Process uploaded images and optionally generate new images
+    Process uploaded images and optionally generate new images with specified size
     """
     try:
-        logger.info(f"Processing {len(request.images)} images (generate_images={request.generate_images})")
+        logger.info(f"Processing {len(request.images)} images (generate_images={request.generate_images}, size={request.image_size})")
+        
+        # Validate size parameter
+        if request.image_size not in SIZE_CONFIGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image_size. Must be one of: {list(SIZE_CONFIGS.keys())}"
+            )
         
         # Convert Pydantic models to dict format your agent expects
         images_data = [
@@ -105,24 +140,16 @@ async def process_images(request: ProcessRequest):
             for img in request.images
         ]
         
-        # SOLUTION 1: Wrap in async task with proper timeout handling
-        async def process_with_timeout():
+        # Wrapper function with timeout handling
+        async def safe_process():
             try:
-                # Process images using your enhanced agent
-                result = agent.process(images_data, generate_images=request.generate_images)
-                return result
-            except asyncio.TimeoutError:
-                logger.error("OpenAI request timed out")
-                return {
-                    "success": False,
-                    "error": "Image generation timed out. Please try with fewer images or disable image generation.",
-                    "descriptions": [],
-                    "products": [],
-                    "prompts": [],
-                    "generated_images": []
-                }
+                return agent.process(
+                    images_data, 
+                    generate_images=request.generate_images,
+                    image_size=request.image_size  # Pass size to agent
+                )
             except Exception as e:
-                logger.error(f"Processing error in timeout wrapper: {str(e)}")
+                logger.error(f"Agent processing error: {e}")
                 return {
                     "success": False,
                     "error": f"Processing failed: {str(e)}",
@@ -132,41 +159,46 @@ async def process_images(request: ProcessRequest):
                     "generated_images": []
                 }
         
-        # SOLUTION 2: Set a reasonable timeout (under Railway's limits)
+        # Set timeout UNDER Railway's limit (3 minutes vs 4 minute Railway limit)
         try:
-            result = await asyncio.wait_for(process_with_timeout(), timeout=180.0)  # 3 minutes max
+            result = await asyncio.wait_for(safe_process(), timeout=180.0)  # 3 minutes max
+            logger.info("Processing completed successfully")
+            
+            # Add size info to generated images
+            if result.get("generated_images"):
+                size_config = SIZE_CONFIGS[request.image_size]
+                for img in result["generated_images"]:
+                    img["size"] = size_config["size"]
+            
+            # Add processing metadata
+            result["processing_timestamp"] = "2025-01-01T00:00:00Z"
+            result["api_version"] = "2.0.0"
+            result["image_format"] = SIZE_CONFIGS[request.image_size]["label"]
+            
+            return result
+            
         except asyncio.TimeoutError:
-            logger.error("Process timed out after 3 minutes")
-            return ProcessResponse(
-                success=False,
-                error="Request timed out. Try with fewer images or disable image generation.",
-                descriptions=[],
-                products=[],
-                prompts=[],
-                generated_images=[],
-                message="Timeout occurred - please try again with fewer images"
-            )
-        
-        logger.info(f"Processing completed: {result.get('success', False)}")
-        
-        # Add processing metadata
-        result["processing_timestamp"] = "2025-01-01T00:00:00Z"  # You can use actual datetime
-        result["api_version"] = "2.0.0"
-        
-        return result
+            logger.error("Processing timed out after 3 minutes")
+            return {
+                "success": False,
+                "error": "Request timed out. Try with fewer images or disable image generation.",
+                "descriptions": [],
+                "products": [],
+                "prompts": [],
+                "generated_images": [],
+                "message": "⏰ Timeout - please try again with fewer images"
+            }
         
     except Exception as e:
-        logger.error(f"Processing error: {str(e)}")
-        return ProcessResponse(
-            success=False,
-            error=f"Processing failed: {str(e)}",
-            api_version="2.0.0",
-            descriptions=[],
-            products=[],
-            prompts=[],
-            generated_images=[],
-            message="An error occurred during processing"
-        )
+        logger.error(f"Unexpected error: {e}")
+        return {
+            "success": False,
+            "error": f"Processing failed: {str(e)}",
+            "descriptions": [],
+            "products": [],
+            "prompts": [],
+            "generated_images": []
+        }
 
 @app.post("/api/generate-only")
 async def generate_images_only(request: GenerateRequest):
@@ -174,7 +206,14 @@ async def generate_images_only(request: GenerateRequest):
     Generate images from provided prompts and input images using GPT-Image-1
     """
     try:
-        logger.info(f"Generating images for {len(request.prompts)} prompts with {len(request.images)} input images")
+        logger.info(f"Generating images for {len(request.prompts)} prompts with {len(request.images)} input images (size={request.image_size})")
+        
+        # Validate size parameter
+        if request.image_size not in SIZE_CONFIGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image_size. Must be one of: {list(SIZE_CONFIGS.keys())}"
+            )
         
         # Convert input images to the format expected by the agent
         images_data = [
@@ -188,10 +227,15 @@ async def generate_images_only(request: GenerateRequest):
                 detail="Input images are required for GPT-Image-1"
             )
         
-        # SOLUTION 3: Wrap image generation with timeout
+        # Wrapper with timeout
         async def generate_with_timeout():
             try:
-                generated_images = agent.generate_images(request.prompts, images_data, max_images=request.max_images)
+                generated_images = agent.generate_images(
+                    request.prompts, 
+                    images_data, 
+                    max_images=request.max_images,
+                    image_size=request.image_size
+                )
                 return generated_images
             except asyncio.TimeoutError:
                 logger.error("Image generation timed out")
@@ -202,6 +246,12 @@ async def generate_images_only(request: GenerateRequest):
         
         try:
             generated_images = await asyncio.wait_for(generate_with_timeout(), timeout=120.0)  # 2 minutes for generation only
+            
+            # Add size info to generated images
+            size_config = SIZE_CONFIGS[request.image_size]
+            for img in generated_images:
+                img["size"] = size_config["size"]
+            
         except asyncio.TimeoutError:
             return {
                 "success": False,
@@ -215,7 +265,8 @@ async def generate_images_only(request: GenerateRequest):
             "success": True,
             "generated_images": generated_images,
             "total_generated": len(generated_images),
-            "message": f"Generated {len(generated_images)} images using GPT-Image-1"
+            "message": f"Generated {len(generated_images)} images using GPT-Image-1 in {SIZE_CONFIGS[request.image_size]['size']} format",
+            "image_format": SIZE_CONFIGS[request.image_size]["label"]
         }
         
     except Exception as e:
@@ -228,6 +279,16 @@ async def generate_images_only(request: GenerateRequest):
             }
         )
 
+@app.get("/api/sizes")
+def get_supported_sizes():
+    """
+    Get all supported image sizes and their configurations
+    """
+    return {
+        "supported_sizes": SIZE_CONFIGS,
+        "default_size": "instagram"
+    }
+
 @app.get("/api/pricing")
 def get_pricing_info():
     """
@@ -237,7 +298,7 @@ def get_pricing_info():
         "image_generation": {
             "model": "GPT-Image-1",
             "cost_per_image": "$0.08 USD",
-            "size": "1024x1024",
+            "supported_sizes": list(SIZE_CONFIGS.keys()),
             "type": "Image editing/enhancement",
             "requires_input_image": True
         },
@@ -247,7 +308,7 @@ def get_pricing_info():
             "prompt_generation": "Included"
         },
         "limits": {
-            "max_images_per_request": 3,
+            "max_images_per_request": 1,
             "max_file_size": "10MB",
             "supported_formats": ["JPEG", "PNG", "WEBP"]
         }
@@ -266,10 +327,12 @@ def health_check():
         "port": os.getenv("PORT", "8000"),
         "features": {
             "image_processing": True,
+            "multi_platform_generation": True,
             "gpt_image_1_generation": bool(os.getenv("OPENAI_API_KEY")),
             "product_scanning": True,
             "avatar_classification": True
-        }
+        },
+        "supported_formats": list(SIZE_CONFIGS.keys())
     }
     
     # Check OpenAI connectivity
@@ -289,7 +352,7 @@ def health_check():
     
     return health_status
 
-# This is the key fix for Railway
+# Railway deployment
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))

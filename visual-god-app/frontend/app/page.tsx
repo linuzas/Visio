@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay } from 'lucide-react'
 
 interface GeneratedImage {
   prompt: string
@@ -9,6 +9,7 @@ interface GeneratedImage {
   image_url?: string
   index: number
   input_image?: string
+  size?: string
 }
 
 interface ProcessedResult {
@@ -28,12 +29,38 @@ interface ProcessedResult {
   message?: string
 }
 
+// 🎯 UPDATED: New image size configurations
+const IMAGE_SIZES = {
+  instagram: {
+    label: 'Instagram Reels',
+    size: '1080x1920',
+    icon: Instagram,
+    description: 'Vertical format (9:16) for Instagram Reels',
+    aspect: 'Vertical'
+  },
+  facebook: {
+    label: 'Facebook Photo Ad',
+    size: '1080x1080',
+    icon: Facebook,
+    description: 'Square format (1:1) for Facebook feed',
+    aspect: 'Square'
+  },
+  youtube: {
+    label: 'YouTube Banner',
+    size: '2560x1440',
+    icon: MonitorPlay,
+    description: 'Widescreen format (16:9) for all devices',
+    aspect: 'Landscape'
+  }
+}
+
 export default function VisualGodApp() {
   const [files, setFiles] = useState<File[]>([])
   const [processing, setProcessing] = useState(false)
   const [result, setResult] = useState<ProcessedResult | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [generateImages, setGenerateImages] = useState(true)
+  const [selectedSize, setSelectedSize] = useState<keyof typeof IMAGE_SIZES>('instagram')
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -70,9 +97,10 @@ export default function VisualGodApp() {
   }
 
   const downloadImage = (image: GeneratedImage) => {
+    const sizeConfig = IMAGE_SIZES[selectedSize]
     const link = document.createElement('a')
     link.href = `data:image/jpeg;base64,${image.image_base64}`
-    link.download = `visual-god-enhanced-${image.index + 1}.jpg`
+    link.download = `visual-god-${sizeConfig.label.toLowerCase().replace(/\s+/g, '-')}-${image.index + 1}.jpg`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -102,7 +130,7 @@ export default function VisualGodApp() {
 
       const images = await Promise.all(imagePromises)
 
-      // Call API with new generate_images parameter
+      // Call API with size configuration
       const response = await fetch('/api/process', {
         method: 'POST',
         headers: {
@@ -111,7 +139,8 @@ export default function VisualGodApp() {
         body: JSON.stringify({
           images,
           userId: null,
-          generate_images: generateImages
+          generate_images: generateImages,
+          image_size: selectedSize // Add size parameter
         }),
       })
 
@@ -155,15 +184,25 @@ export default function VisualGodApp() {
                     <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-3">
                       <Wand2 className="w-8 h-8" />
                       AI-Enhanced Images ({result.generated_images.length})
+                      <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
+                        {IMAGE_SIZES[selectedSize].size}
+                      </span>
+                      <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
+                        {IMAGE_SIZES[selectedSize].aspect}
+                      </span>
                       <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">GPT-Image-1</span>
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {result.generated_images.map((image, i) => (
                         <div key={i} className="bg-white/5 rounded-lg overflow-hidden">
-                          <div className="aspect-square relative group">
+                          <div className={`relative group ${
+                            selectedSize === 'instagram' ? 'aspect-[9/16]' : 
+                            selectedSize === 'facebook' ? 'aspect-square' : 
+                            'aspect-[16/9]'
+                          }`}>
                             <img
                               src={`data:image/jpeg;base64,${image.image_base64}`}
-                              alt={`AI-enhanced image ${i + 1}`}
+                              alt={`AI-enhanced ${IMAGE_SIZES[selectedSize].label} ${i + 1}`}
                               className="w-full h-full object-cover transition-transform group-hover:scale-105"
                             />
                             {image.input_image && (
@@ -171,6 +210,9 @@ export default function VisualGodApp() {
                                 From: {image.input_image}
                               </div>
                             )}
+                            <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                              {IMAGE_SIZES[selectedSize].size}
+                            </div>
                           </div>
                           <div className="p-4">
                             <p className="text-white/80 text-sm mb-3 line-clamp-3">
@@ -181,7 +223,7 @@ export default function VisualGodApp() {
                               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
                             >
                               <Download className="w-4 h-4" />
-                              Download Enhanced
+                              Download {IMAGE_SIZES[selectedSize].label}
                             </button>
                           </div>
                         </div>
@@ -189,7 +231,7 @@ export default function VisualGodApp() {
                     </div>
                     <div className="mt-4 text-center">
                       <p className="text-white/60 text-sm">
-                        ✨ Images enhanced using GPT-Image-1 from your uploaded content
+                        ✨ Images enhanced using GPT-Image-1 in {IMAGE_SIZES[selectedSize].size} format
                       </p>
                     </div>
                   </div>
@@ -296,7 +338,7 @@ export default function VisualGodApp() {
             <Sparkles className="w-10 h-10" />
             Visual God
           </h1>
-          <p className="text-white/80 text-center mb-8">AI-Powered Content Creator with Image Enhancement</p>
+          <p className="text-white/80 text-center mb-8">AI-Powered Multi-Platform Content Creator</p>
 
           {/* Upload Area */}
           <div
@@ -340,9 +382,49 @@ export default function VisualGodApp() {
             </div>
           )}
 
-          {/* Process Button */}
+          {/* Options */}
           {files.length > 0 && (
             <>
+              {/* Image Size Selection */}
+              <div className="mt-6 bg-white/5 rounded-xl p-6">
+                <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5" />
+                  Choose Platform Format
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {Object.entries(IMAGE_SIZES).map(([key, config]) => {
+                    const IconComponent = config.icon
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setSelectedSize(key as keyof typeof IMAGE_SIZES)}
+                        className={`p-4 rounded-lg border-2 transition-all text-left ${
+                          selectedSize === key
+                            ? 'border-white bg-white/10 text-white'
+                            : 'border-white/30 hover:border-white/50 text-white/80 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 mb-2">
+                          <IconComponent className="w-5 h-5" />
+                          <span className="font-medium">{config.label}</span>
+                        </div>
+                        <p className="text-xs opacity-80 font-mono">{config.size}</p>
+                        <p className="text-xs opacity-60">{config.description}</p>
+                        <div className="mt-2">
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            config.aspect === 'Vertical' ? 'bg-blue-500/30' :
+                            config.aspect === 'Square' ? 'bg-green-500/30' :
+                            'bg-purple-500/30'
+                          }`}>
+                            {config.aspect}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Generate Images Toggle */}
               <div className="mt-6 flex items-center justify-between bg-white/5 rounded-xl p-4">
                 <div>
@@ -373,7 +455,7 @@ export default function VisualGodApp() {
                 ) : (
                   <>
                     {generateImages ? <Wand2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                    {generateImages ? 'Analyze & Enhance Images' : 'Analyze Images Only'}
+                    Create {IMAGE_SIZES[selectedSize].label} ({IMAGE_SIZES[selectedSize].size})
                   </>
                 )}
               </button>
@@ -386,6 +468,10 @@ export default function VisualGodApp() {
             <ul className="space-y-2 text-white/80 text-sm">
               <li>📸 Upload clear product images (bottles, gadgets, cosmetics, etc.)</li>
               <li>👤 Optionally add avatar images for lifestyle content</li>
+              <li>📱 Choose your target platform format:</li>
+              <li className="ml-4">• <strong>Instagram Reels:</strong> 1080x1920 (9:16 vertical)</li>
+              <li className="ml-4">• <strong>Facebook Ads:</strong> 1080x1080 (1:1 square)</li>
+              <li className="ml-4">• <strong>YouTube Banner:</strong> 2560x1440 (16:9 widescreen)</li>
               <li>🤖 AI analyzes and classifies your images</li>
               <li>✨ Get professional marketing prompts instantly</li>
               <li>🎨 <strong>NEW:</strong> Generate enhanced marketing images using GPT-Image-1</li>
@@ -394,8 +480,7 @@ export default function VisualGodApp() {
             
             <div className="mt-4 p-3 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg border border-white/10">
               <p className="text-white/90 text-xs">
-                <strong>GPT-Image-1</strong> uses your uploaded images as a foundation to create 
-                professional marketing visuals with enhanced lighting, composition, and style.
+                <strong>Multi-Platform Optimization:</strong> Each format is specifically optimized for maximum engagement on its respective platform. Instagram Reels for vertical mobile viewing, Facebook Ads for feed placement, and YouTube Banners for all device types.
               </p>
             </div>
           </div>

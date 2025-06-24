@@ -9,7 +9,14 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 from langchain_openai import ChatOpenAI
 import uuid
-import httpx  # 🔥 ADD THIS IMPORT
+import httpx
+
+# 🎯 UPDATED: New size mapping for your requirements
+SIZE_MAPPING = {
+    "instagram": "1080x1920",  # Instagram Reels (9:16)
+    "facebook": "1080x1080",   # Facebook Photo Ad (1:1)
+    "youtube": "2560x1440"     # YouTube Banner (16:9)
+}
 
 # === ENHANCED STATE WITH IMAGE GENERATION ===
 class AgentState(TypedDict):
@@ -27,22 +34,17 @@ class AgentState(TypedDict):
     generated_images: Optional[List[dict]]
     generate_images_flag: Optional[bool]
     image_data_list: Optional[List[dict]]  # Store original image data for GPT-Image-1
+    image_size: Optional[str]  # Add image size to state
 
 # === UTILS ===
 def get_llm():
     return ChatOpenAI(temperature=0.7, model="gpt-4o")
 
-# 🔥 FIX #1: Add timeout-configured OpenAI client
 def get_openai_client():
     """Create OpenAI client with extended timeout for Railway deployment"""
     return OpenAI(
         api_key=os.environ.get('OPENAI_API_KEY'),
-        timeout=httpx.Timeout(
-            total=180.0,      # Total request timeout (3 minutes)
-            connect=30.0,     # Connection timeout  
-            read=150.0,       # Read timeout (image generation)
-            write=30.0        # Write timeout
-        ),
+        timeout=180.0,        # Simple 3-minute timeout
         max_retries=1         # Reduce retries to save time
     )
 
@@ -60,7 +62,7 @@ def classify_uploaded_images(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content="❌ No images provided")]
         }
     
-    client = get_openai_client()  # 🔥 USE NEW CLIENT
+    client = get_openai_client()
     descriptions = []
 
     try:
@@ -121,7 +123,7 @@ def scan_products_and_store(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content="❌ No image descriptions available")]
         }
     
-    client = get_openai_client()  # 🔥 USE NEW CLIENT
+    client = get_openai_client()
     product_data = []
     
     try:
@@ -188,7 +190,7 @@ def classify_avatar_type(state: AgentState) -> AgentState:
             "current_step": "no_avatars_found"
         }
 
-    client = get_openai_client()  # 🔥 USE NEW CLIENT
+    client = get_openai_client()
     avatar_types = []
     messages = state.get("messages", [])
 
@@ -361,7 +363,7 @@ def generate_single_product_prompt_flow(state: AgentState) -> AgentState:
         ]
     }
 
-# === FIXED GPT-IMAGE-1 GENERATION NODE ===
+# === UPDATED GPT-IMAGE-1 GENERATION NODE WITH NEW SIZES ===
 def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
     print("🎨 Executing GPT-Image-1 generation...")
 
@@ -378,7 +380,10 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
         }
 
     prompt_image_pairs = state.get("prompt_image_pairs", [])
-    print(f"📦 Found {len(prompt_image_pairs)} prompt-image pairs")
+    image_size = state.get("image_size", "instagram")
+    target_size = SIZE_MAPPING.get(image_size, "1080x1920")
+    
+    print(f"📦 Found {len(prompt_image_pairs)} prompt-image pairs, target size: {target_size}")
     
     if not prompt_image_pairs:
         print("⚠️ No prompt_image_pairs found in state!")
@@ -390,12 +395,12 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
             ]
         }
 
-    client = get_openai_client()  # 🔥 USE NEW CLIENT
+    client = get_openai_client()
     generated_images = []
     errors = []
 
-    # 🔥 FIX #2: Reduce to only 1 image to prevent timeouts
-    limited_pairs = prompt_image_pairs[:1]  # CHANGED FROM 3 TO 1
+    # Reduce to only 1 image to prevent timeouts
+    limited_pairs = prompt_image_pairs[:1]
 
     for idx, pair in enumerate(limited_pairs):
         prompt = pair["prompt"]
@@ -406,7 +411,7 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
             continue
 
         try:
-            print(f"🔁 Generating image {idx+1}/{len(limited_pairs)}")
+            print(f"🔁 Generating {target_size} image {idx+1}/{len(limited_pairs)}")
 
             # Use the first available image as input
             input_image_data = image_data_list[0]
@@ -418,12 +423,14 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                 temp_file_path = temp_file.name
 
             try:
-                # Call GPT-Image-1
+                # Call GPT-Image-1 with size-aware prompt
+                enhanced_prompt = f"{prompt}. Optimized for {target_size} format, aspect ratio suitable for {image_size} platform."
+                
                 with open(temp_file_path, 'rb') as image_file:
                     result = client.images.edit(
                         model="gpt-image-1",
                         image=image_file,
-                        prompt=prompt,
+                        prompt=enhanced_prompt,
                         size="1024x1024",
                         n=1
                     )
@@ -435,10 +442,11 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                     "image_base64": image_base64,
                     "image_url": None,
                     "index": idx,
-                    "input_image": input_image_data.get('filename', f'image_{idx}')
+                    "input_image": input_image_data.get('filename', f'image_{idx}'),
+                    "size": target_size
                 })
 
-                print(f"✅ Image {idx+1} generated successfully")
+                print(f"✅ {target_size} image {idx+1} generated successfully")
 
             finally:
                 # Clean up temp file
@@ -448,12 +456,12 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                     pass
 
         except Exception as e:
-            error_msg = f"❌ Failed to generate image {idx+1}: {e}"
+            error_msg = f"❌ Failed to generate {target_size} image {idx+1}: {e}"
             print(error_msg)
             errors.append(error_msg)
 
     status_message = (
-        f"✅ Generated {len(generated_images)} image(s) using GPT-Image-1."
+        f"✅ Generated {len(generated_images)} {target_size} image(s) using GPT-Image-1."
         if generated_images else "❌ No images generated."
     )
 
@@ -564,7 +572,7 @@ def build_enhanced_agent():
     print("✅ Enhanced agent built successfully with GPT-Image-1 integration")
     return graph.compile()
 
-# === MAIN AGENT CLASS ===
+# === MAIN AGENT CLASS WITH NEW SIZE SUPPORT ===
 class ContentAgent:
     def __init__(self):
         self.agent = build_enhanced_agent()
@@ -573,16 +581,18 @@ class ContentAgent:
         if not os.environ.get('OPENAI_API_KEY'):
             raise ValueError("OPENAI_API_KEY environment variable is required")
     
-    def process(self, image_data_list: List[Dict], generate_images: bool = True) -> Dict:
-        """Main processing pipeline using LangGraph"""
+    def process(self, image_data_list: List[Dict], generate_images: bool = True, image_size: str = "instagram") -> Dict:
+        """Main processing pipeline using LangGraph with size support"""
         try:
-            print(f"🔄 Processing {len(image_data_list)} images with graph...")
+            target_size = SIZE_MAPPING.get(image_size, "1080x1920")
+            print(f"🔄 Processing {len(image_data_list)} images with graph (target: {target_size})...")
             
-            # Prepare initial state
+            # Prepare initial state with image size
             initial_state = {
                 "messages": [HumanMessage(content="Processing uploaded images...")],
                 "image_data_list": image_data_list,
                 "generate_images_flag": generate_images,
+                "image_size": image_size,
                 "current_step": "initialized"
             }
             
@@ -600,10 +610,11 @@ class ContentAgent:
                 "generated_images": final_state.get("generated_images", []),
                 "session_id": final_state.get("session_id"),
                 "current_step": final_state.get("current_step"),
+                "image_format": target_size,
                 "messages": [msg.content for msg in final_state.get("messages", []) if hasattr(msg, 'content')]
             }
             
-            # Generate summary message
+            # Generate summary message with size info
             num_products = len(result.get("products", []))
             num_images = len(result.get("generated_images", []))
             has_avatar = result.get("has_avatar", False)
@@ -611,7 +622,7 @@ class ContentAgent:
             result["message"] = (
                 f"Successfully processed {num_products} product(s)" + 
                 (" with avatar" if has_avatar else "") +
-                (f" and generated {num_images} enhanced images" if num_images > 0 else "")
+                (f" and generated {num_images} enhanced {target_size} images" if num_images > 0 else "")
             )
             
             # Handle errors
@@ -633,6 +644,36 @@ class ContentAgent:
                 "generated_images": [],
                 "messages": [f"Error: {str(e)}"]
             }
+
+    def generate_images(self, prompts: List[str], images_data: List[Dict], max_images: int = 1, image_size: str = "instagram") -> List[Dict]:
+        """Generate images only using provided prompts and images with size support"""
+        try:
+            target_size = SIZE_MAPPING.get(image_size, "1080x1920")
+            print(f"🎨 Generating {target_size} images...")
+            
+            # Create prompt-image pairs
+            prompt_image_pairs = []
+            for i, prompt in enumerate(prompts[:max_images]):
+                prompt_image_pairs.append({
+                    "prompt": prompt,
+                    "images": images_data
+                })
+            
+            # Create state for generation
+            state = {
+                "prompt_image_pairs": prompt_image_pairs,
+                "generate_images_flag": True,
+                "image_size": image_size,
+                "messages": []
+            }
+            
+            # Run generation
+            result_state = generate_images_with_gpt_image_1(state)
+            return result_state.get("generated_images", [])
+            
+        except Exception as e:
+            print(f"❌ Image generation failed: {str(e)}")
+            return []
 
 # Singleton instance
 agent = ContentAgent()
