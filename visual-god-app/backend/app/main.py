@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 import os
 import sys
 import logging
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -104,8 +105,47 @@ async def process_images(request: ProcessRequest):
             for img in request.images
         ]
         
-        # Process images using your enhanced agent
-        result = agent.process(images_data, generate_images=request.generate_images)
+        # SOLUTION 1: Wrap in async task with proper timeout handling
+        async def process_with_timeout():
+            try:
+                # Process images using your enhanced agent
+                result = agent.process(images_data, generate_images=request.generate_images)
+                return result
+            except asyncio.TimeoutError:
+                logger.error("OpenAI request timed out")
+                return {
+                    "success": False,
+                    "error": "Image generation timed out. Please try with fewer images or disable image generation.",
+                    "descriptions": [],
+                    "products": [],
+                    "prompts": [],
+                    "generated_images": []
+                }
+            except Exception as e:
+                logger.error(f"Processing error in timeout wrapper: {str(e)}")
+                return {
+                    "success": False,
+                    "error": f"Processing failed: {str(e)}",
+                    "descriptions": [],
+                    "products": [],
+                    "prompts": [],
+                    "generated_images": []
+                }
+        
+        # SOLUTION 2: Set a reasonable timeout (under Railway's limits)
+        try:
+            result = await asyncio.wait_for(process_with_timeout(), timeout=180.0)  # 3 minutes max
+        except asyncio.TimeoutError:
+            logger.error("Process timed out after 3 minutes")
+            return ProcessResponse(
+                success=False,
+                error="Request timed out. Try with fewer images or disable image generation.",
+                descriptions=[],
+                products=[],
+                prompts=[],
+                generated_images=[],
+                message="Timeout occurred - please try again with fewer images"
+            )
         
         logger.info(f"Processing completed: {result.get('success', False)}")
         
@@ -117,13 +157,15 @@ async def process_images(request: ProcessRequest):
         
     except Exception as e:
         logger.error(f"Processing error: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail={
-                "success": False,
-                "error": f"Processing failed: {str(e)}",
-                "api_version": "2.0.0"
-            }
+        return ProcessResponse(
+            success=False,
+            error=f"Processing failed: {str(e)}",
+            api_version="2.0.0",
+            descriptions=[],
+            products=[],
+            prompts=[],
+            generated_images=[],
+            message="An error occurred during processing"
         )
 
 @app.post("/api/generate-only")
@@ -146,8 +188,28 @@ async def generate_images_only(request: GenerateRequest):
                 detail="Input images are required for GPT-Image-1"
             )
         
-        # Use the agent's generation capability directly
-        generated_images = agent.generate_images(request.prompts, images_data, max_images=request.max_images)
+        # SOLUTION 3: Wrap image generation with timeout
+        async def generate_with_timeout():
+            try:
+                generated_images = agent.generate_images(request.prompts, images_data, max_images=request.max_images)
+                return generated_images
+            except asyncio.TimeoutError:
+                logger.error("Image generation timed out")
+                return []
+            except Exception as e:
+                logger.error(f"Image generation error: {str(e)}")
+                raise
+        
+        try:
+            generated_images = await asyncio.wait_for(generate_with_timeout(), timeout=120.0)  # 2 minutes for generation only
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": "Image generation timed out. Please try with fewer prompts.",
+                "generated_images": [],
+                "total_generated": 0,
+                "message": "Generation timed out - try fewer images"
+            }
         
         return {
             "success": True,

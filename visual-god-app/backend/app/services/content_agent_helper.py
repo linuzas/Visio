@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 from langchain_openai import ChatOpenAI
 import uuid
+import httpx  # 🔥 ADD THIS IMPORT
 
 # === ENHANCED STATE WITH IMAGE GENERATION ===
 class AgentState(TypedDict):
@@ -31,6 +32,20 @@ class AgentState(TypedDict):
 def get_llm():
     return ChatOpenAI(temperature=0.7, model="gpt-4o")
 
+# 🔥 FIX #1: Add timeout-configured OpenAI client
+def get_openai_client():
+    """Create OpenAI client with extended timeout for Railway deployment"""
+    return OpenAI(
+        api_key=os.environ.get('OPENAI_API_KEY'),
+        timeout=httpx.Timeout(
+            total=180.0,      # Total request timeout (3 minutes)
+            connect=30.0,     # Connection timeout  
+            read=150.0,       # Read timeout (image generation)
+            write=30.0        # Write timeout
+        ),
+        max_retries=1         # Reduce retries to save time
+    )
+
 # === CLASSIFY IMAGES NODE ===
 def classify_uploaded_images(state: AgentState) -> AgentState:
     print("🔄 Executing classify_uploaded_images...")
@@ -45,7 +60,7 @@ def classify_uploaded_images(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content="❌ No images provided")]
         }
     
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+    client = get_openai_client()  # 🔥 USE NEW CLIENT
     descriptions = []
 
     try:
@@ -106,7 +121,7 @@ def scan_products_and_store(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content="❌ No image descriptions available")]
         }
     
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+    client = get_openai_client()  # 🔥 USE NEW CLIENT
     product_data = []
     
     try:
@@ -173,7 +188,7 @@ def classify_avatar_type(state: AgentState) -> AgentState:
             "current_step": "no_avatars_found"
         }
 
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+    client = get_openai_client()  # 🔥 USE NEW CLIENT
     avatar_types = []
     messages = state.get("messages", [])
 
@@ -346,7 +361,7 @@ def generate_single_product_prompt_flow(state: AgentState) -> AgentState:
         ]
     }
 
-# === NEW GPT-IMAGE-1 GENERATION NODE ===
+# === FIXED GPT-IMAGE-1 GENERATION NODE ===
 def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
     print("🎨 Executing GPT-Image-1 generation...")
 
@@ -375,12 +390,12 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
             ]
         }
 
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+    client = get_openai_client()  # 🔥 USE NEW CLIENT
     generated_images = []
     errors = []
 
-    # Limit to first 3 prompts for cost control
-    limited_pairs = prompt_image_pairs[:3]
+    # 🔥 FIX #2: Reduce to only 1 image to prevent timeouts
+    limited_pairs = prompt_image_pairs[:1]  # CHANGED FROM 3 TO 1
 
     for idx, pair in enumerate(limited_pairs):
         prompt = pair["prompt"]
