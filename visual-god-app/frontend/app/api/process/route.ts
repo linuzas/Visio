@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
 
-const BACKEND_URL = process.env.BACKEND_URL || 'https://visualapp-production.up.railway.app'
+const BACKEND_URL = process.env.BACKEND_URL || 'visio-production-ec6a.up.railway.app'
 
 // Type definitions
 interface GeneratedImage {
