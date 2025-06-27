@@ -1,3 +1,4 @@
+# File: visual-god-app/backend/app/services/content_agent_helper.py
 import os
 import base64
 import json
@@ -10,6 +11,8 @@ from typing import TypedDict, Annotated
 from langchain_openai import ChatOpenAI
 import uuid
 import httpx
+from PIL import Image
+import io
 
 # 🎯 UPDATED: New size mapping for your requirements
 SIZE_MAPPING = {
@@ -18,19 +21,15 @@ SIZE_MAPPING = {
     "youtube": "2560x1440"     # YouTube Banner (16:9)
 }
 
-# === ENHANCED STATE WITH IMAGE GENERATION ===
+# === ENHANCED STATE FOR PRODUCT-ONLY PROCESSING ===
 class AgentState(TypedDict):
     messages: Annotated[List[Any], lambda l, r: l + r]
-    product_images: Optional[List[str]]
-    image_descriptions: Optional[List[str]]
     current_step: Optional[str]
     products_scanned: Optional[List[dict]]
-    avatar_type: Optional[str]
     edit_prompts: Optional[List[str]]
     prompt_image_pairs: Optional[List[dict]]
-    image_urls: Optional[List[str]]
     session_id: Optional[str]
-    # NEW FIELDS FOR IMAGE GENERATION
+    # FIELDS FOR IMAGE GENERATION
     generated_images: Optional[List[dict]]
     generate_images_flag: Optional[bool]
     image_data_list: Optional[List[dict]]  # Store original image data for GPT-Image-1
@@ -48,9 +47,62 @@ def get_openai_client():
         max_retries=1         # Reduce retries to save time
     )
 
-# === CLASSIFY IMAGES NODE ===
-def classify_uploaded_images(state: AgentState) -> AgentState:
-    print("🔄 Executing classify_uploaded_images...")
+def resize_image_to_target(image_base64: str, target_size: str) -> str:
+    """Resize image to target dimensions while maintaining quality"""
+    try:
+        # Parse target dimensions
+        width, height = map(int, target_size.split('x'))
+        
+        # Decode base64 image
+        image_data = base64.b64decode(image_base64)
+        image = Image.open(io.BytesIO(image_data))
+        
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Calculate aspect ratios
+        original_ratio = image.width / image.height
+        target_ratio = width / height
+        
+        # Resize strategy: fill the target dimensions, then crop if needed
+        if original_ratio > target_ratio:
+            # Image is wider than target - fit height, crop width
+            new_height = height
+            new_width = int(height * original_ratio)
+            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Center crop to target width
+            left = (new_width - width) // 2
+            image = image.crop((left, 0, left + width, height))
+        else:
+            # Image is taller than target - fit width, crop height
+            new_width = width
+            new_height = int(width / original_ratio)
+            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Center crop to target height
+            top = (new_height - height) // 2
+            image = image.crop((0, top, width, top + height))
+        
+        # Ensure final size is exactly target
+        image = image.resize((width, height), Image.Resampling.LANCZOS)
+        
+        # Convert back to base64
+        buffer = io.BytesIO()
+        image.save(buffer, format='JPEG', quality=95, optimize=True)
+        resized_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        print(f"✅ Resized image to {width}x{height} (target: {target_size})")
+        return resized_base64
+        
+    except Exception as e:
+        print(f"❌ Error resizing image: {e}")
+        return image_base64  # Return original if resize fails
+
+# === VALIDATE PRODUCT IMAGES NODE ===
+def validate_product_images(state: AgentState) -> AgentState:
+    print("🔄 Executing validate_product_images...")
     
     # Get image data from state (should be base64 data)
     image_data_list = state.get("image_data_list", [])
@@ -63,12 +115,13 @@ def classify_uploaded_images(state: AgentState) -> AgentState:
         }
     
     client = get_openai_client()
-    descriptions = []
+    valid_products = []
+    rejected_images = []
 
     try:
-        print("   Calling OpenAI for classification...")
+        print("   Validating images are products only...")
         for i, img_data in enumerate(image_data_list):
-            print(f"   Classifying image {i+1}/{len(image_data_list)}")
+            print(f"   Validating image {i+1}/{len(image_data_list)}")
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
@@ -76,36 +129,51 @@ def classify_uploaded_images(state: AgentState) -> AgentState:
                         "role": "user",
                         "content": [
                             {"type": "text", "text": (
-                                "What is the main subject of this image?\n"
-                                "Respond with one word only: 'product' (for objects), "
-                                "'avatar' (if it's a person or animated character), "
-                                "or 'other'."
+                                "Is this image showing a physical product (like food, cosmetics, electronics, clothing, etc.)? "
+                                "Do NOT accept people, avatars, or scenes. Only accept clear product photos. "
+                                "Respond with only 'YES' if it's a clear product photo, or 'NO' if it contains people or is not a product."
                             )},
                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
                         ],
                     }
                 ]
             )
-            label = response.choices[0].message.content.strip().lower()
-            descriptions.append(label)
-            print(f"   Image {i+1} classified as: {label}")
+            is_product = response.choices[0].message.content.strip().upper() == "YES"
+            
+            if is_product:
+                valid_products.append(img_data)
+                print(f"   ✅ Image {i+1} validated as product")
+            else:
+                rejected_images.append(img_data.get('filename', f'image_{i+1}'))
+                print(f"   ❌ Image {i+1} rejected (not a product)")
 
+        if not valid_products:
+            return {
+                **state,
+                "current_step": "no_valid_products",
+                "messages": state.get("messages", []) + [
+                    AIMessage(content="❌ No valid product images found. Please upload only product photos (no people or avatars).")
+                ]
+            }
+
+        # Update state with only valid products
         result = {
             **state,
-            "image_descriptions": descriptions,
-            "current_step": "images_classified",
-            "messages": state.get("messages", []) + [AIMessage(content=f"✅ Image types: {descriptions}")]
+            "image_data_list": valid_products,
+            "current_step": "products_validated",
+            "messages": state.get("messages", []) + [
+                AIMessage(content=f"✅ Validated {len(valid_products)} product images. Rejected {len(rejected_images)} non-product images.")
+            ]
         }
-        print(f"✅ Classification complete: {descriptions}")
+        print(f"✅ Validation complete: {len(valid_products)} valid products")
         return result
 
     except Exception as e:
         print(f"   OpenAI API error: {e}")
         return {
             **state,
-            "image_descriptions": [],
-            "current_step": "classification_failed",
-            "messages": state.get("messages", []) + [AIMessage(content=f"❌ Classification failed: {e}")]
+            "current_step": "validation_failed",
+            "messages": state.get("messages", []) + [AIMessage(content=f"❌ Validation failed: {e}")]
         }
 
 # === SCAN PRODUCTS NODE ===
@@ -113,26 +181,21 @@ def scan_products_and_store(state: AgentState) -> AgentState:
     print("🔄 Executing scan_products_and_store...")
     
     image_data_list = state.get("image_data_list", [])
-    image_descriptions = state.get("image_descriptions", [])
     
-    if not image_descriptions:
-        print("   No image descriptions available")
+    if not image_data_list:
+        print("   No image data available")
         return {
             **state,
-            "current_step": "no_descriptions",
-            "messages": state.get("messages", []) + [AIMessage(content="❌ No image descriptions available")]
+            "current_step": "no_images_for_scanning",
+            "messages": state.get("messages", []) + [AIMessage(content="❌ No images available for scanning")]
         }
     
     client = get_openai_client()
     product_data = []
     
     try:
-        for img_data, desc in zip(image_data_list, image_descriptions):
-            if desc != "product":
-                print(f"   Skipping {img_data.get('filename', 'unknown')} (not a product: {desc})")
-                continue
-
-            print(f"   Scanning product: {img_data.get('filename', 'unknown')}")
+        for i, img_data in enumerate(image_data_list):
+            print(f"   Scanning product: {img_data.get('filename', f'image_{i+1}')}")
 
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -140,9 +203,9 @@ def scan_products_and_store(state: AgentState) -> AgentState:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": (
-                            "Identify the product in this image.\n"
+                            "Identify the product in this image. Be specific about the product name. "
                             "Return ONLY JSON in the format:\n"
-                            "{\"product_name\": \"Lavender Body Lotion\", \"product_type\": \"skincare\", \"brand_name\": \"Brand Name or null\"}"
+                            "{\"product_name\": \"Specific Product Name\", \"product_type\": \"category\", \"brand_name\": \"Brand Name or null\"}"
                         )},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
                     ]
@@ -153,6 +216,9 @@ def scan_products_and_store(state: AgentState) -> AgentState:
             start = content.find("{")
             end = content.rfind("}") + 1
             data = json.loads(content[start:end])
+            
+            # Add original image data for later use
+            data["original_image"] = img_data
             product_data.append(data)
             print(f"   Product identified: {data}")
 
@@ -160,7 +226,7 @@ def scan_products_and_store(state: AgentState) -> AgentState:
             **state,
             "products_scanned": product_data,
             "current_step": "products_scanned",
-            "messages": state.get("messages", []) + [AIMessage(content=f"🔍 Products identified: {product_data}")]
+            "messages": state.get("messages", []) + [AIMessage(content=f"🔍 Identified {len(product_data)} product(s)")]
         }
         print(f"✅ Product scanning complete: {len(product_data)} products")
         return result
@@ -173,199 +239,69 @@ def scan_products_and_store(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content=f"❌ Scanning error: {e}")]
         }
 
-# === CLASSIFY AVATAR NODE ===
-def classify_avatar_type(state: AgentState) -> AgentState:
-    print("🔄 Executing classify_avatar_type...")
-    
-    image_data_list = state.get("image_data_list", [])
-    image_descriptions = state.get("image_descriptions", [])
-    avatar_data = [
-        img for img, desc in zip(image_data_list, image_descriptions) if desc == "avatar"
-    ]
-
-    if not avatar_data:
-        print("   No avatars found, continuing...")
-        return {
-            **state,
-            "current_step": "no_avatars_found"
-        }
-
-    client = get_openai_client()
-    avatar_types = []
-    messages = state.get("messages", [])
-
-    for img_data in avatar_data:
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": (
-                            "What type of figure is shown in this image? "
-                            "Respond with only one word: 'woman', 'man', 'child', or 'character'."
-                        )},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
-                    ]
-                }]
-            )
-            result = response.choices[0].message.content.strip().lower()
-            
-            valid_types = ["woman", "man", "child", "character"]
-            if result in valid_types:
-                classification_result = result
-                print(f"   Avatar classified as: {result}")
-            else:
-                classification_result = "person"
-                print(f"   Unexpected response '{result}', using default 'person'")
-                
-        except Exception as e:
-            print(f"   Avatar classification failed: {e}, using default 'person'")
-            classification_result = "person"
-
-        avatar_types.append(classification_result)
-        messages.append(AIMessage(content=f"🧑 Avatar classified as: {classification_result}"))
-
-    print(f"✅ Avatar classification complete: {avatar_types}")
-    return {
-        **state,
-        "avatar_type": avatar_types[0] if avatar_types else None,  # Take first avatar type
-        "current_step": "avatars_classified",
-        "messages": messages
-    }
-
-# === ENHANCED PROMPT GENERATION FUNCTIONS ===
-def prompt_avatar_with_product(
-    avatar_type: str,
-    product_name: str,
-    product_type: str,
-    strategy: str = "joy"
-) -> str:
-    """Generate enhanced avatar + product prompts"""
-    avatar_mapping = {
-        "woman": "woman",
-        "man": "man", 
-        "child": "child",
-        "character": "animated character",
-        "person": "person"
-    }
-    
-    mapped_avatar = avatar_mapping.get(avatar_type, "person")
-    
-    if strategy == "lifestyle":
-        return f"Cinematic lifestyle photograph: A happy {mapped_avatar} joyfully using {product_name} ({product_type}) in a modern, bright setting. Golden hour lighting, shallow depth of field, professional color grading, 8K resolution, commercial photography style."
-    elif strategy == "professional":
-        return f"Professional advertisement shot: Confident {mapped_avatar} showcasing {product_name} with genuine smile. Studio lighting setup, clean background, premium aesthetic, high-end commercial photography, ultra-sharp details."
-    else:  # authentic
-        return f"Authentic lifestyle moment: {mapped_avatar.capitalize()} enjoying {product_name} in natural everyday environment. Soft natural lighting, candid expression, warm tones, documentary-style photography, emotional connection."
-
-def prompts_single_product_styles(product_name: str, product_type: str) -> List[str]:
-    """Generate enhanced product-only prompts"""
-    return [
-        f"Premium product photography: {product_name} ({product_type}) on minimalist white background. Professional studio lighting, ultra-sharp focus, commercial quality, 8K resolution, luxury aesthetic, no shadows.",
-        f"Hero shot composition: {product_name} as the centerpiece with dramatic side lighting. Dark gradient background, premium product presentation, commercial photography, professional color grading, luxurious feel.",
-        f"Creative product display: {product_name} with elegant complementary styling. Artistic composition, soft rim lighting, modern aesthetic, magazine-quality photography, sophisticated presentation."
-    ]
-
-# === PROMPT GENERATION NODES ===
-def combine_avatar_and_product(state: AgentState) -> AgentState:
-    print("🔄 Executing combine_avatar_and_product...")
-
-    image_data_list = state.get("image_data_list", [])
-    image_descriptions = state.get("image_descriptions", [])
-    products = state.get("products_scanned", [])
-    avatar_type = state.get("avatar_type", "person")
-
-    avatar_data = [img for img, desc in zip(image_data_list, image_descriptions) if desc == "avatar"]
-    product_data = [img for img, desc in zip(image_data_list, image_descriptions) if desc == "product"]
-
-    print(f"🧍 Avatar count: {len(avatar_data)}")
-    print(f"📦 Product count: {len(product_data)}")
-
-    prompts = []
-    prompt_image_pairs = []
-
-    strategies = ["lifestyle", "professional", "authentic"]
-
-    for product in products:
-        name = product.get("product_name", "the product")
-        ptype = product.get("product_type", "item")
-
-        for strategy in strategies:
-            prompt = prompt_avatar_with_product(
-                avatar_type=avatar_type,
-                product_name=name,
-                product_type=ptype,
-                strategy=strategy
-            )
-            
-            prompts.append(prompt)
-            # Include both avatar and product images for GPT-Image-1
-            prompt_image_pairs.append({
-                "prompt": prompt,
-                "images": avatar_data + product_data,
-                "strategy": strategy
-            })
-
-    print(f"✅ Generated {len(prompt_image_pairs)} enhanced avatar-product prompt pairs")
-
-    return {
-        **state,
-        "edit_prompts": prompts,
-        "prompt_image_pairs": prompt_image_pairs,
-        "current_step": "avatar_product_prompt_ready",
-        "messages": state.get("messages", []) + [
-            AIMessage(content=f"🎬 Created {len(prompts)} enhanced avatar-product prompts with cinematic styling.")
-        ]
-    }
-
-def generate_single_product_prompt_flow(state: AgentState) -> AgentState:
-    print("🔄 Executing generate_single_product_prompt_flow...")
+# === GENERATE SPECIFIC PROMPTS FOR EACH PRODUCT ===
+def generate_specific_prompts(state: AgentState) -> AgentState:
+    print("🔄 Executing generate_specific_prompts...")
 
     products = state.get("products_scanned", [])
-    image_data_list = state.get("image_data_list", [])
-    image_descriptions = state.get("image_descriptions", [])
     
     if not products:
         return {
             **state,
-            "current_step": "no_products",
-            "messages": state.get("messages", []) + [AIMessage(content="❌ No products found")]
+            "current_step": "no_products_for_prompts",
+            "messages": state.get("messages", []) + [AIMessage(content="❌ No products found for prompt generation")]
         }
-
-    product_data = [img for img, desc in zip(image_data_list, image_descriptions) if desc == "product"]
 
     all_prompts = []
     all_prompt_image_pairs = []
 
-    for product in products:
-        product_name = product.get("product_name", "product")
-        product_type = product.get("product_type", "item")
-
-        style_prompts = prompts_single_product_styles(product_name, product_type)
+    # Your 3 specific prompts
+    prompt_templates = [
+        # Prompt 1: Bird's-eye view crosswalk
+        "A surreal, bird's-eye view of a city street pedestrian crossing, filled with tiny, realistic people walking in various directions. In the center of the crosswalk lies a giant {product_name}, replacing the crosswalk stripes or interacting with them as if it's part of the scene. The perspective should make the product look enormous in comparison to the people. The style should be ultra-realistic with slight artistic exaggeration, with good lighting and detailed shadows cast by the product and people, similar to a high-end street photography shot.",
         
-        for prompt in style_prompts:
+        # Prompt 2: 3D Billboard (customized for any product)
+        "A hyper-realistic nighttime city intersection with a massive, curved 3D digital billboard on the side of a modern building. The billboard displays a dynamic 3D advertisement of a floating {product_name}, emerging slightly out of the screen as if it's interacting with the real world. The product is well-lit with cinematic lighting, surrounded by subtle particles and visual effects that emphasize the product's key features. Pedestrians below are watching or walking by, giving a sense of scale and realism. The overall atmosphere is futuristic, premium, and similar to Times Square or Piccadilly Circus LED displays.",
+        
+        # Prompt 3: Editorial layout
+        "Create a clean, high-end editorial product layout featuring {product_name}, inspired by premium sneaker and fashion catalog designs. The composition should include: A large, detailed top-down product view on the right side of the image. A cluster of 3 to 4 angled or stacked product views in the bottom-left area. A minimalist light background (off-white or neutral gray), with soft shadows and clean studio lighting. No text or logos anywhere in the image. The layout should feel like a modern fashion magazine or product showcase, balanced and highly aesthetic, with careful placement and visual harmony. Use photorealistic lighting, professional product rendering style, and subtle depth and shadows."
+    ]
+
+    for product in products:
+        product_name = product.get("product_name", "the product")
+        original_image = product.get("original_image")
+        
+        print(f"   Generating 3 prompts for: {product_name}")
+        
+        # Generate all 3 prompts for this product
+        for i, template in enumerate(prompt_templates):
+            prompt = template.format(product_name=product_name)
             all_prompts.append(prompt)
+            
+            # Create prompt-image pair with original product image
             all_prompt_image_pairs.append({
                 "prompt": prompt,
-                "images": product_data
+                "images": [original_image] if original_image else [],
+                "product_name": product_name,
+                "prompt_type": f"style_{i+1}",
+                "prompt_index": i
             })
 
-    print(f"✅ Generated {len(all_prompt_image_pairs)} enhanced single product prompts")
+    print(f"✅ Generated {len(all_prompt_image_pairs)} prompts for {len(products)} product(s) (3 per product)")
 
     return {
         **state,
         "edit_prompts": all_prompts,
         "prompt_image_pairs": all_prompt_image_pairs,
-        "current_step": "single_product_prompts_ready",
+        "current_step": "prompts_generated",
         "messages": state.get("messages", []) + [
-            AIMessage(content=f"🎬 Generated {len(all_prompts)} enhanced cinematic prompts for {len(products)} product(s).")
+            AIMessage(content=f"🎬 Generated 3 creative prompts for each product ({len(all_prompt_image_pairs)} total prompts)")
         ]
     }
 
-# === UPDATED GPT-IMAGE-1 GENERATION NODE WITH NEW SIZES ===
+# === GENERATE IMAGES WITH GPT-IMAGE-1 ===
 def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
-    print("🎨 Executing GPT-Image-1 generation...")
+    print("🎨 Executing GPT-Image-1 generation for all products...")
 
     # Check if image generation is enabled
     generate_flag = state.get("generate_images_flag", True)
@@ -399,21 +335,21 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
     generated_images = []
     errors = []
 
-    # Reduce to only 1 image to prevent timeouts
-    limited_pairs = prompt_image_pairs[:1]
-
-    for idx, pair in enumerate(limited_pairs):
+    # Process all prompt-image pairs (3 per product)
+    for idx, pair in enumerate(prompt_image_pairs):
         prompt = pair["prompt"]
         image_data_list = pair["images"]
+        product_name = pair.get("product_name", f"Product {idx}")
+        prompt_type = pair.get("prompt_type", f"style_{idx}")
 
         if not image_data_list:
             print(f"   No images available for prompt {idx+1}")
             continue
 
         try:
-            print(f"🔁 Generating {target_size} image {idx+1}/{len(limited_pairs)}")
+            print(f"🔁 Generating image {idx+1}/{len(prompt_image_pairs)} for {product_name} ({prompt_type})")
 
-            # Use the first available image as input
+            # Use the original product image as input
             input_image_data = image_data_list[0]
             image_bytes = base64.b64decode(input_image_data['base64'])
 
@@ -423,30 +359,37 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                 temp_file_path = temp_file.name
 
             try:
-                # Call GPT-Image-1 with size-aware prompt
-                enhanced_prompt = f"{prompt}. Optimized for {target_size} format, aspect ratio suitable for {image_size} platform."
+                # Call GPT-Image-1 with the specific prompt
+                enhanced_prompt = f"{prompt} High quality, professional photography, ultra-detailed, cinematic."
                 
                 with open(temp_file_path, 'rb') as image_file:
                     result = client.images.edit(
                         model="gpt-image-1",
                         image=image_file,
                         prompt=enhanced_prompt,
-                        size="1024x1024",
+                        size="1024x1024",  # GPT-Image-1 native size
                         n=1
                     )
 
-                image_base64 = result.data[0].b64_json
+                # Get the generated image
+                generated_base64 = result.data[0].b64_json
+                
+                # Resize to target dimensions
+                print(f"🔧 Resizing from 1024x1024 to {target_size}")
+                resized_base64 = resize_image_to_target(generated_base64, target_size)
 
                 generated_images.append({
                     "prompt": prompt,
-                    "image_base64": image_base64,
+                    "image_base64": resized_base64,
                     "image_url": None,
                     "index": idx,
                     "input_image": input_image_data.get('filename', f'image_{idx}'),
-                    "size": target_size
+                    "size": target_size,
+                    "product_name": product_name,
+                    "prompt_type": prompt_type
                 })
 
-                print(f"✅ {target_size} image {idx+1} generated successfully")
+                print(f"✅ Generated and resized image {idx+1} for {product_name} ({prompt_type})")
 
             finally:
                 # Clean up temp file
@@ -456,12 +399,12 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                     pass
 
         except Exception as e:
-            error_msg = f"❌ Failed to generate {target_size} image {idx+1}: {e}"
+            error_msg = f"❌ Failed to generate image {idx+1} for {product_name}: {e}"
             print(error_msg)
             errors.append(error_msg)
 
     status_message = (
-        f"✅ Generated {len(generated_images)} {target_size} image(s) using GPT-Image-1."
+        f"✅ Generated {len(generated_images)} {target_size} images using GPT-Image-1."
         if generated_images else "❌ No images generated."
     )
 
@@ -473,41 +416,6 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
             AIMessage(content=status_message)
         ] + [AIMessage(content=msg) for msg in errors]
     }
-
-# === ROUTE DECISIONS ===
-def decide_representation_type(state: AgentState) -> str:
-    print("🔄 Executing decide_representation_type...")
-
-    products = state.get("products_scanned", [])
-    image_descriptions = state.get("image_descriptions", [])
-    has_avatar = "avatar" in image_descriptions if image_descriptions else False
-    num_products = len(products)
-
-    print(f"   Products found: {num_products}")
-    print(f"   Has avatar: {has_avatar}")
-
-    if not products:
-        print("   → Route: invalid_upload")
-        return "invalid_upload"
-
-    if has_avatar and num_products >= 1:
-        print("   → Route: combine_avatar_and_product")
-        return "combine_avatar_and_product"
-
-    print("   → Route: generate_single_product_prompt_flow")
-    return "generate_single_product_prompt_flow"
-
-# === INVALID UPLOAD NODE ===
-def invalid_upload(state: AgentState) -> AgentState:
-    print("🔄 Executing invalid_upload...")
-    
-    result = {
-        **state,
-        "current_step": "invalid_upload",
-        "messages": state.get("messages", []) + [AIMessage(content="⚠️ Invalid images detected. Please upload only products and/or an avatar.")]
-    }
-    print("✅ Invalid upload handled")
-    return result
 
 # === END NODE ===
 def end_processing(state: AgentState) -> AgentState:
@@ -527,69 +435,91 @@ def end_processing(state: AgentState) -> AgentState:
         ]
     }
 
+# === INVALID UPLOAD NODE ===
+def invalid_upload(state: AgentState) -> AgentState:
+    print("🔄 Executing invalid_upload...")
+    
+    result = {
+        **state,
+        "current_step": "invalid_upload",
+        "messages": state.get("messages", []) + [AIMessage(content="⚠️ Please upload only product images. No people or avatars allowed.")]
+    }
+    print("✅ Invalid upload handled")
+    return result
+
+# === ROUTE DECISION ===
+def decide_next_step(state: AgentState) -> str:
+    print("🔄 Executing decide_next_step...")
+
+    current_step = state.get("current_step")
+    
+    if current_step == "products_validated":
+        print("   → Route: scan_products_and_store")
+        return "scan_products_and_store"
+    elif current_step == "no_valid_products":
+        print("   → Route: invalid_upload")
+        return "invalid_upload"
+    else:
+        print(f"   → Route: end_processing (current_step: {current_step})")
+        return "end_processing"
+
 # === GRAPH BUILDER ===
-def build_enhanced_agent():
-    print("🏗️ Building enhanced agent with GPT-Image-1 generation...")
+def build_product_only_agent():
+    print("🏗️ Building product-only agent with 3 specific prompts per product...")
     graph = StateGraph(AgentState)
 
     # Add all nodes
-    graph.add_node("classify_uploaded_images", classify_uploaded_images)
+    graph.add_node("validate_product_images", validate_product_images)
     graph.add_node("scan_products_and_store", scan_products_and_store)
-    graph.add_node("classify_avatar_type", classify_avatar_type)
-    graph.add_node("combine_avatar_and_product", combine_avatar_and_product)
-    graph.add_node("generate_single_product_prompt_flow", generate_single_product_prompt_flow)
+    graph.add_node("generate_specific_prompts", generate_specific_prompts)
     graph.add_node("generate_images_with_gpt_image_1", generate_images_with_gpt_image_1)
     graph.add_node("invalid_upload", invalid_upload)
     graph.add_node("end_processing", end_processing)
 
     # Set entry point
-    graph.set_entry_point("classify_uploaded_images")
+    graph.set_entry_point("validate_product_images")
     
-    # Add simple edges
-    graph.add_edge("classify_uploaded_images", "scan_products_and_store")
-    graph.add_edge("scan_products_and_store", "classify_avatar_type")
-    
-    # Add conditional edge for routing
+    # Add conditional edge from validation
     graph.add_conditional_edges(
-        "classify_avatar_type",
-        decide_representation_type,
+        "validate_product_images",
+        decide_next_step,
         {
-            "combine_avatar_and_product": "combine_avatar_and_product",
-            "generate_single_product_prompt_flow": "generate_single_product_prompt_flow",
-            "invalid_upload": "invalid_upload"
+            "scan_products_and_store": "scan_products_and_store",
+            "invalid_upload": "invalid_upload",
+            "end_processing": "end_processing"
         }
     )
     
-    # Route successful prompt generation to image generation
-    graph.add_edge("combine_avatar_and_product", "generate_images_with_gpt_image_1")
-    graph.add_edge("generate_single_product_prompt_flow", "generate_images_with_gpt_image_1")
+    # Linear flow for successful product processing
+    graph.add_edge("scan_products_and_store", "generate_specific_prompts")
+    graph.add_edge("generate_specific_prompts", "generate_images_with_gpt_image_1")
     
     # Route to end
     graph.add_edge("generate_images_with_gpt_image_1", "end_processing")
     graph.add_edge("invalid_upload", "end_processing")
     graph.add_edge("end_processing", END)
 
-    print("✅ Enhanced agent built successfully with GPT-Image-1 integration")
+    print("✅ Product-only agent built successfully with 3 specific prompts per product")
     return graph.compile()
 
-# === MAIN AGENT CLASS WITH NEW SIZE SUPPORT ===
+# === MAIN AGENT CLASS ===
 class ContentAgent:
     def __init__(self):
-        self.agent = build_enhanced_agent()
+        self.agent = build_product_only_agent()
         
         # Ensure we have an API key
         if not os.environ.get('OPENAI_API_KEY'):
             raise ValueError("OPENAI_API_KEY environment variable is required")
     
     def process(self, image_data_list: List[Dict], generate_images: bool = True, image_size: str = "instagram") -> Dict:
-        """Main processing pipeline using LangGraph with size support"""
+        """Main processing pipeline for product-only images with 3 specific prompts per product"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
-            print(f"🔄 Processing {len(image_data_list)} images with graph (target: {target_size})...")
+            print(f"🔄 Processing {len(image_data_list)} images (products only, target: {target_size})...")
             
-            # Prepare initial state with image size
+            # Prepare initial state
             initial_state = {
-                "messages": [HumanMessage(content="Processing uploaded images...")],
+                "messages": [HumanMessage(content="Processing product images...")],
                 "image_data_list": image_data_list,
                 "generate_images_flag": generate_images,
                 "image_size": image_size,
@@ -602,11 +532,11 @@ class ContentAgent:
             # Extract results from final state
             result = {
                 "success": final_state.get("current_step") == "processing_complete",
-                "descriptions": final_state.get("image_descriptions", []),
+                "descriptions": ["product"] * len(final_state.get("products_scanned", [])),  # All are products
                 "products": final_state.get("products_scanned", []),
                 "prompts": final_state.get("edit_prompts", []),
-                "has_avatar": "avatar" in final_state.get("image_descriptions", []),
-                "avatar_type": final_state.get("avatar_type"),
+                "has_avatar": False,  # No avatars allowed
+                "avatar_type": None,
                 "generated_images": final_state.get("generated_images", []),
                 "session_id": final_state.get("session_id"),
                 "current_step": final_state.get("current_step"),
@@ -614,15 +544,13 @@ class ContentAgent:
                 "messages": [msg.content for msg in final_state.get("messages", []) if hasattr(msg, 'content')]
             }
             
-            # Generate summary message with size info
+            # Generate summary message
             num_products = len(result.get("products", []))
             num_images = len(result.get("generated_images", []))
-            has_avatar = result.get("has_avatar", False)
             
             result["message"] = (
-                f"Successfully processed {num_products} product(s)" + 
-                (" with avatar" if has_avatar else "") +
-                (f" and generated {num_images} enhanced {target_size} images" if num_images > 0 else "")
+                f"Successfully processed {num_products} product(s)" +
+                (f" and generated {num_images} enhanced {target_size} images (3 styles per product)" if num_images > 0 else "")
             )
             
             # Handle errors
@@ -630,11 +558,11 @@ class ContentAgent:
                 error_messages = [msg for msg in result["messages"] if "❌" in msg or "error" in msg.lower()]
                 result["error"] = error_messages[-1] if error_messages else "Processing failed"
             
-            print(f"✅ Graph processing complete: {result['message']}")
+            print(f"✅ Product processing complete: {result['message']}")
             return result
             
         except Exception as e:
-            print(f"❌ Graph processing failed: {str(e)}")
+            print(f"❌ Product processing failed: {str(e)}")
             return {
                 "success": False,
                 "error": f"Processing failed: {str(e)}",
@@ -645,18 +573,20 @@ class ContentAgent:
                 "messages": [f"Error: {str(e)}"]
             }
 
-    def generate_images(self, prompts: List[str], images_data: List[Dict], max_images: int = 1, image_size: str = "instagram") -> List[Dict]:
-        """Generate images only using provided prompts and images with size support"""
+    def generate_images(self, prompts: List[str], images_data: List[Dict], max_images: int = 3, image_size: str = "instagram") -> List[Dict]:
+        """Generate images using provided prompts and images (3 per product)"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
             print(f"🎨 Generating {target_size} images...")
             
-            # Create prompt-image pairs
+            # Create prompt-image pairs (limit to max_images)
             prompt_image_pairs = []
             for i, prompt in enumerate(prompts[:max_images]):
                 prompt_image_pairs.append({
                     "prompt": prompt,
-                    "images": images_data
+                    "images": images_data,
+                    "product_name": f"Product {i//3 + 1}",
+                    "prompt_type": f"style_{(i%3) + 1}"
                 })
             
             # Create state for generation

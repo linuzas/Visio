@@ -1,0 +1,19 @@
+{
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/.next",
+  "installCommand": "cd frontend && npm install",
+  "framework": "nextjs",
+  "functions": {
+    "frontend/app/api/**/*.ts": {
+      "maxDuration": 300
+    }
+  },
+  "regions": ["iad1"],
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_SUPABASE_URL": "@next_public_supabase_url",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@next_public_supabase_anon_key",
+      "BACKEND_URL": "@backend_url"
+    }
+  }
+}
