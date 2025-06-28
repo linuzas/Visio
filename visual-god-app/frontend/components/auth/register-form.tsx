@@ -1,4 +1,3 @@
-// visual-god-app/frontend/components/auth/register-form.tsx
 'use client'
 
 import { useState } from 'react'
@@ -74,12 +73,12 @@ export function RegisterForm() {
           <CheckCircle className="w-8 h-8 text-green-400" />
         </div>
         <h3 className="text-xl font-semibold text-white">Check your email!</h3>
-        <p className="text-white/60">
+        <p className="text-white/80">
           We've sent you a confirmation link. Please check your email to verify your account.
         </p>
         <Link
           href="/auth/login"
-          className="inline-block text-purple-400 hover:text-purple-300 font-medium"
+          className="inline-block text-white font-semibold hover:text-pink-200 underline underline-offset-2"
         >
           Back to login
         </Link>
@@ -87,12 +86,14 @@ export function RegisterForm() {
     )
   }
 
+  const inputClass = "w-full bg-black/30 border border-white/30 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/50 focus:outline-none focus:border-white/60 focus:bg-black/40 transition-all backdrop-blur-sm"
+
   return (
     <form onSubmit={handleRegister} className="space-y-6">
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-          <p className="text-red-400 text-sm">{error}</p>
+        <div className="bg-red-500/20 border border-red-400 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
+          <p className="text-red-200 text-sm font-medium">{error}</p>
         </div>
       )}
 
@@ -102,14 +103,14 @@ export function RegisterForm() {
             Username
           </label>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
             <input
               id="username"
               name="username"
               type="text"
               value={formData.username}
               onChange={handleChange}
-              className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/15 transition-all"
+              className={inputClass}
               placeholder="cooluser123"
             />
           </div>
@@ -120,14 +121,14 @@ export function RegisterForm() {
             Full Name
           </label>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
             <input
               id="fullName"
               name="fullName"
               type="text"
               value={formData.fullName}
               onChange={handleChange}
-              className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/15 transition-all"
+              className={inputClass}
               placeholder="John Doe"
             />
           </div>
@@ -139,14 +140,14 @@ export function RegisterForm() {
           Email Address
         </label>
         <div className="relative">
-          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
           <input
             id="email"
             name="email"
             type="email"
             value={formData.email}
             onChange={handleChange}
-            className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/15 transition-all"
+            className={inputClass}
             placeholder="you@example.com"
             required
           />
@@ -158,14 +159,14 @@ export function RegisterForm() {
           Password
         </label>
         <div className="relative">
-          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
           <input
             id="password"
             name="password"
             type="password"
             value={formData.password}
             onChange={handleChange}
-            className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/15 transition-all"
+            className={inputClass}
             placeholder="Min 6 characters"
             required
           />
@@ -177,14 +178,14 @@ export function RegisterForm() {
           Confirm Password
         </label>
         <div className="relative">
-          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60" />
           <input
             id="confirmPassword"
             name="confirmPassword"
             type="password"
             value={formData.confirmPassword}
             onChange={handleChange}
-            className="w-full bg-white/10 border border-white/20 rounded-xl py-3 pl-12 pr-4 text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/15 transition-all"
+            className={inputClass}
             placeholder="Repeat password"
             required
           />
@@ -195,16 +196,16 @@ export function RegisterForm() {
         <input
           type="checkbox"
           id="terms"
-          className="w-4 h-4 bg-white/10 border-white/20 rounded focus:ring-2 focus:ring-purple-500"
+          className="w-4 h-4 bg-black/30 border-white/30 rounded focus:ring-2 focus:ring-purple-500"
           required
         />
         <label htmlFor="terms" className="ml-2 text-sm text-white/80">
           I agree to the{' '}
-          <Link href="/terms" className="text-purple-400 hover:text-purple-300">
+          <Link href="/terms" className="text-white font-semibold hover:text-pink-200 underline underline-offset-2">
             Terms of Service
           </Link>{' '}
           and{' '}
-          <Link href="/privacy" className="text-purple-400 hover:text-purple-300">
+          <Link href="/privacy" className="text-white font-semibold hover:text-pink-200 underline underline-offset-2">
             Privacy Policy
           </Link>
         </label>
@@ -213,7 +214,7 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
       >
         {loading ? (
           <>
@@ -225,9 +226,9 @@ export function RegisterForm() {
         )}
       </button>
 
-      <p className="text-center text-white/60">
+      <p className="text-center text-white/80">
         Already have an account?{' '}
-        <Link href="/auth/login" className="text-purple-400 hover:text-purple-300 font-medium">
+        <Link href="/auth/login" className="text-white font-semibold hover:text-pink-200 underline underline-offset-2">
           Sign in
         </Link>
       </p>

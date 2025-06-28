@@ -2,88 +2,27 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Download, Clock, ImageIcon, Sparkles, Home, Eye } from 'lucide-react'
+import { ArrowLeft, Download, Clock, ImageIcon, Sparkles, Eye, X } from 'lucide-react'
 import Link from 'next/link'
 
-interface GeneratedImage {
-  id: string
-  filename: string
-  prompt_text: string
-  platform: string
-  size: string
-  created_at: string
-  metadata?: {
-    base64?: string
-    public_url?: string
-    storage_path?: string
-  }
-}
-
-interface Session {
-  id: string
-  session_name: string
-  status: string
-  credits_used: number
-  created_at: string
-  generated_images: GeneratedImage[]
-}
-
 interface HistoryContentProps {
-  sessions: Session[]
+  sessions: any[]
 }
 
 export function HistoryContent({ sessions }: HistoryContentProps) {
   const router = useRouter()
   const [selectedSession, setSelectedSession] = useState<string | null>(null)
-  const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null)
+  const [viewingImage, setViewingImage] = useState<any>(null)
 
-  const getImageUrl = (image: GeneratedImage) => {
-    // Try storage URL first, then fall back to base64
-    if (image.metadata?.public_url) {
-      return image.metadata.public_url
-    } else if (image.metadata?.base64) {
-      return `data:image/jpeg;base64,${image.metadata.base64}`
+  const downloadImage = (imageData: any) => {
+    if (imageData.metadata?.base64) {
+      const link = document.createElement('a')
+      link.href = `data:image/jpeg;base64,${imageData.metadata.base64}`
+      link.download = imageData.filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
     }
-    return null
-  }
-
-  const downloadImage = async (image: GeneratedImage) => {
-    try {
-      const imageUrl = getImageUrl(image)
-      if (!imageUrl) {
-        console.error('No image URL available')
-        return
-      }
-
-      // If it's a storage URL, fetch it
-      if (image.metadata?.public_url) {
-        const response = await fetch(imageUrl)
-        const blob = await response.blob()
-        const url = window.URL.createObjectURL(blob)
-        
-        const link = document.createElement('a')
-        link.href = url
-        link.download = image.filename
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        window.URL.revokeObjectURL(url)
-      } else {
-        // If it's base64, download directly
-        const link = document.createElement('a')
-        link.href = imageUrl
-        link.download = image.filename
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-      }
-    } catch (error) {
-      console.error('Download failed:', error)
-    }
-  }
-
-  const viewImage = (image: GeneratedImage) => {
-    setSelectedImage(image)
   }
 
   return (
@@ -95,22 +34,13 @@ export function HistoryContent({ sessions }: HistoryContentProps) {
               <Clock className="w-8 h-8" />
               Generation History
             </h1>
-            <div className="flex items-center gap-4">
-              <Link
-                href="/"
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
-              >
-                <Home className="w-4 h-4" />
-                Home
-              </Link>
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
-              </Link>
-            </div>
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Dashboard
+            </Link>
           </div>
 
           {sessions.length === 0 ? (
@@ -162,76 +92,54 @@ export function HistoryContent({ sessions }: HistoryContentProps) {
 
                   {selectedSession === session.id && session.generated_images?.length > 0 && (
                     <div className="mt-6 pt-6 border-t border-white/10">
-                      <h4 className="text-white font-medium mb-4 flex items-center gap-2">
-                        <Sparkles className="w-5 h-5" />
-                        Generated Images ({session.generated_images.length})
-                      </h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {session.generated_images.map((image: GeneratedImage) => {
-                          const imageUrl = getImageUrl(image)
-                          
-                          return (
-                            <div key={image.id} className="bg-white/5 rounded-lg p-4">
-                              {imageUrl ? (
-                                <div className="space-y-3">
-                                  <div className="relative group">
-                                    <img
-                                      src={imageUrl}
-                                      alt={image.filename}
-                                      className="w-full h-48 object-cover rounded-lg"
-                                      onError={(e) => {
-                                        console.error('Image load error:', e)
-                                        e.currentTarget.style.display = 'none'
+                        {session.generated_images.map((image: any) => (
+                          <div key={image.id} className="bg-white/5 rounded-lg overflow-hidden group">
+                            <div className="aspect-square relative">
+                              {image.metadata?.base64 ? (
+                                <>
+                                  <img
+                                    src={`data:image/jpeg;base64,${image.metadata.base64}`}
+                                    alt={image.filename}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setViewingImage(image)
                                       }}
-                                    />
-                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-2">
-                                      <button
-                                        onClick={() => viewImage(image)}
-                                        className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition"
-                                      >
-                                        <Eye className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() => downloadImage(image)}
-                                        className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition"
-                                      >
-                                        <Download className="w-4 h-4" />
-                                      </button>
-                                    </div>
+                                      className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition"
+                                    >
+                                      <Eye className="w-5 h-5 text-white" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        downloadImage(image)
+                                      }}
+                                      className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition"
+                                    >
+                                      <Download className="w-5 h-5 text-white" />
+                                    </button>
                                   </div>
-                                  <div>
-                                    <p className="text-white/80 text-sm mb-2 line-clamp-2">
-                                      {image.prompt_text}
-                                    </p>
-                                    <div className="flex items-center justify-between text-white/60 text-xs">
-                                      <span>{image.platform} • {image.size}</span>
-                                      <span>{new Date(image.created_at).toLocaleDateString()}</span>
-                                    </div>
-                                    {image.metadata?.public_url && (
-                                      <p className="text-green-300 text-xs mt-1">Stored in cloud</p>
-                                    )}
-                                  </div>
-                                </div>
+                                </>
                               ) : (
-                                <div className="space-y-3">
-                                  <div className="w-full h-48 bg-white/10 rounded-lg flex items-center justify-center">
-                                    <ImageIcon className="w-12 h-12 text-white/40" />
-                                  </div>
-                                  <div>
-                                    <p className="text-white/80 text-sm mb-2 line-clamp-2">
-                                      {image.prompt_text}
-                                    </p>
-                                    <div className="flex items-center justify-between text-white/60 text-xs">
-                                      <span>{image.platform} • {image.size}</span>
-                                      <span>{new Date(image.created_at).toLocaleDateString()}</span>
-                                    </div>
-                                    <p className="text-white/50 text-xs mt-1">Image not available</p>
-                                  </div>
+                                <div className="w-full h-full bg-white/10 flex items-center justify-center">
+                                  <ImageIcon className="w-12 h-12 text-white/40" />
                                 </div>
                               )}
                             </div>
-                          )
-                        })}
+                            <div className="p-3">
+                              <p className="text-white/80 text-sm line-clamp-2">
+                                {image.prompt_text}
+                              </p>
+                              <div className="flex items-center justify-between mt-2 text-white/60 text-xs">
+                                <span>{image.platform} • {image.size}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -242,53 +150,31 @@ export function HistoryContent({ sessions }: HistoryContentProps) {
         </div>
       </div>
 
-      {/* Image Modal */}
-      {selectedImage && (
+      {/* Image Viewer Modal */}
+      {viewingImage && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 max-w-4xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-white font-semibold text-lg">Generated Image</h3>
+          <div className="relative max-w-4xl max-h-[90vh]">
+            <button
+              onClick={() => setViewingImage(null)}
+              className="absolute -top-12 right-0 bg-white/20 hover:bg-white/30 p-2 rounded-lg transition"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
+            <img
+              src={`data:image/jpeg;base64,${viewingImage.metadata.base64}`}
+              alt={viewingImage.filename}
+              className="max-w-full max-h-[85vh] rounded-lg shadow-2xl"
+            />
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-white/80">{viewingImage.prompt_text}</p>
               <button
-                onClick={() => setSelectedImage(null)}
-                className="text-white/60 hover:text-white text-2xl"
+                onClick={() => downloadImage(viewingImage)}
+                className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition flex items-center gap-2"
               >
-                ×
+                <Download className="w-4 h-4" />
+                Download
               </button>
             </div>
-            
-            {getImageUrl(selectedImage) ? (
-              <div className="space-y-4">
-                <img
-                  src={getImageUrl(selectedImage)!}
-                  alt={selectedImage.filename}
-                  className="w-full max-h-[60vh] object-contain rounded-lg"
-                />
-                <div className="bg-white/5 rounded-lg p-4">
-                  <p className="text-white/80 text-sm mb-2">
-                    <strong>Prompt:</strong> {selectedImage.prompt_text}
-                  </p>
-                  <div className="flex items-center justify-between text-white/60 text-sm">
-                    <span>{selectedImage.platform} • {selectedImage.size}</span>
-                    <span>{new Date(selectedImage.created_at).toLocaleString()}</span>
-                  </div>
-                  {selectedImage.metadata?.public_url && (
-                    <p className="text-green-300 text-xs mt-2">✅ Stored in Supabase Storage</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => downloadImage(selectedImage)}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  Download Image
-                </button>
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <ImageIcon className="w-16 h-16 text-white/40 mx-auto mb-4" />
-                <p className="text-white/60">Image data not available</p>
-              </div>
-            )}
           </div>
         </div>
       )}
