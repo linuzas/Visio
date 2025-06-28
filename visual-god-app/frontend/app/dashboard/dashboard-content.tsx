@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, User, CheckCircle, X } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X } from 'lucide-react'
 
 interface GeneratedImage {
   prompt: string
@@ -58,6 +58,16 @@ const IMAGE_SIZES = {
   }
 }
 
+// Fun loading messages
+const LOADING_MESSAGES = [
+  "🎨 Analyzing your images with AI vision...",
+  "🔍 Detecting products and their features...",
+  "✨ Preparing creative prompts...",
+  "🎬 Setting up the perfect scene...",
+  "🌟 Adding some marketing magic...",
+  "🚀 Almost there, creating something amazing..."
+]
+
 interface DashboardContentProps {
   profile: any
   stats: any
@@ -70,17 +80,24 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [dragActive, setDragActive] = useState(false)
   const [generateImages, setGenerateImages] = useState(true)
   const [selectedSize, setSelectedSize] = useState<keyof typeof IMAGE_SIZES>('instagram')
-  
-  // Add these new state variables
-  const [scanResults, setScanResults] = useState<ProcessedResult | null>(null)
-  const [showScanResults, setShowScanResults] = useState(false)
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
-  
+  const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0])
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [processingStep, setProcessingStep] = useState('')
   const router = useRouter()
   const supabase = createClient()
 
   const creditsRemaining = stats?.credits_remaining || 0
   const requiredCredits = generateImages ? IMAGE_SIZES[selectedSize].credits : 0
+
+  // Rotate loading messages
+  const startLoadingMessages = () => {
+    let index = 0
+    const interval = setInterval(() => {
+      index = (index + 1) % LOADING_MESSAGES.length
+      setLoadingMessage(LOADING_MESSAGES[index])
+    }, 3000)
+    return () => clearInterval(interval)
+  }
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault()
@@ -129,18 +146,28 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const processImages = async () => {
     if (files.length === 0) return
 
+    // Check credits
+    if (generateImages && creditsRemaining < requiredCredits) {
+      alert(`Not enough credits. You need ${requiredCredits} credits but only have ${creditsRemaining}.`)
+      return
+    }
+
     setProcessing(true)
     setResult(null)
-    setScanResults(null)
-    setShowScanResults(false)
+    setUploadProgress(0)
+    
+    // Start loading messages rotation
+    const stopMessages = startLoadingMessages()
 
     try {
       // Convert files to base64
-      const imagePromises = files.map(file => {
+      setProcessingStep('Converting images...')
+      const imagePromises = files.map((file, index) => {
         return new Promise<{ base64: string; filename: string }>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => {
             const base64 = e.target?.result as string
+            setUploadProgress(((index + 1) / files.length) * 30)
             resolve({
               base64: base64.split(',')[1],
               filename: file.name
@@ -151,8 +178,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       })
 
       const images = await Promise.all(imagePromises)
+      setUploadProgress(30)
 
       // Create session in database
+      setProcessingStep('Creating session...')
       const { data: session, error: sessionError } = await supabase
         .from('generation_sessions')
         .insert({
@@ -164,10 +193,11 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         .single()
 
       if (sessionError) throw sessionError
-      setCurrentSessionId(session.id)
+      setUploadProgress(40)
 
-      // First, do a scan-only request
-      const scanResponse = await fetch('/api/process', {
+      // Call API
+      setProcessingStep('Processing with AI...')
+      const response = await fetch('/api/process', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -176,109 +206,60 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           images,
           userId: profile.id,
           sessionId: session.id,
-          generate_images: false, // Just scan first
+          generate_images: generateImages,
           image_size: selectedSize
         }),
       })
 
-      if (!scanResponse.ok) {
-        throw new Error(`API Error: ${scanResponse.status}`)
+      setUploadProgress(70)
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`)
       }
 
-      const scanData = await scanResponse.json()
+      const data = await response.json()
+      setUploadProgress(90)
       
-      // Show scan results
-      setScanResults(scanData)
-      setShowScanResults(true)
-      
-      // If user wants to generate images and products were found
-      if (generateImages && scanData.success && scanData.products?.length > 0) {
-        // Check credits
-        if (creditsRemaining < requiredCredits) {
-          setProcessing(false)
-          alert(`Not enough credits. You need ${requiredCredits} credits but only have ${creditsRemaining}.`)
-          return
-        }
-
-        // Wait a bit to show scan results
-        await new Promise(resolve => setTimeout(resolve, 1500))
-
-        // Now generate images
-        const generateResponse = await fetch('/api/process', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            images,
-            userId: profile.id,
-            sessionId: session.id,
-            generate_images: true,
-            image_size: selectedSize
-          }),
+      // Update session status
+      await supabase
+        .from('generation_sessions')
+        .update({
+          status: data.success ? 'completed' : 'failed',
+          credits_used: generateImages ? requiredCredits : 0
         })
+        .eq('id', session.id)
 
-        if (!generateResponse.ok) {
-          throw new Error(`API Error: ${generateResponse.status}`)
-        }
-
-        const data = await generateResponse.json()
-        
-        // Update session status
-        await supabase
-          .from('generation_sessions')
-          .update({
-            status: data.success ? 'completed' : 'failed',
-            credits_used: requiredCredits
-          })
-          .eq('id', session.id)
-
-        // Log usage if successful
-        if (data.success) {
-          await supabase.from('usage_logs').insert({
-            user_id: profile.id,
-            session_id: session.id,
-            action: 'image_generation',
-            credits_used: requiredCredits,
-            metadata: { platform: selectedSize, image_count: data.generated_images?.length || 0 }
-          })
-        }
-
-        setResult(data)
-        router.refresh() // Refresh to update credits
-      } else {
-        // Just show scan results
-        setProcessing(false)
-        if (!scanData.products?.length) {
-          await supabase
-            .from('generation_sessions')
-            .update({
-              status: 'failed',
-              credits_used: 0
-            })
-            .eq('id', session.id)
-        }
+      // Log usage if successful
+      if (data.success && generateImages) {
+        await supabase.from('usage_logs').insert({
+          user_id: profile.id,
+          session_id: session.id,
+          action: 'image_generation',
+          credits_used: requiredCredits,
+          metadata: { platform: selectedSize, image_count: data.generated_images?.length || 0 }
+        })
       }
+
+      setUploadProgress(100)
+      setResult(data)
+      router.refresh() // Refresh to update credits
 
     } catch (error) {
       setResult({
         success: false,
         error: error instanceof Error ? error.message : 'Processing failed'
       })
-      setProcessing(false)
     } finally {
-      if (result) {
-        setProcessing(false)
-      }
+      setProcessing(false)
+      setProcessingStep('')
+      stopMessages()
     }
   }
 
   const reset = () => {
     setFiles([])
     setResult(null)
-    setScanResults(null)
-    setShowScanResults(false)
-    setCurrentSessionId(null)
+    setUploadProgress(0)
   }
 
   const handleLogout = async () => {
@@ -286,7 +267,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     router.push('/')
   }
 
-  // If we have final results, show them
   if (result) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
@@ -313,6 +293,15 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
             {result.success ? (
               <div className="space-y-8">
+                {/* Success Animation */}
+                <div className="text-center mb-6">
+                  <div className="inline-flex items-center justify-center w-20 h-20 bg-green-500/20 rounded-full mb-4 animate-pulse">
+                    <CheckCircle className="w-10 h-10 text-green-400" />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-white mb-2">Processing Complete!</h2>
+                  <p className="text-white/80">{result.message}</p>
+                </div>
+
                 {/* Generated Images */}
                 {result.generated_images && result.generated_images.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
@@ -325,7 +314,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {result.generated_images.map((image, i) => (
-                        <div key={i} className="bg-white/5 rounded-lg overflow-hidden">
+                        <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all">
                           <div className={`relative group ${
                             selectedSize === 'instagram' ? 'aspect-[9/16]' : 
                             selectedSize === 'facebook' ? 'aspect-square' : 
@@ -334,10 +323,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                             <img
                               src={`data:image/jpeg;base64,${image.image_base64}`}
                               alt={`Generated ${i + 1}`}
-                              className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                              className="w-full h-full object-cover"
                             />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                           </div>
                           <div className="p-4">
+                            <p className="text-white/80 text-sm mb-3 line-clamp-2">
+                              {image.prompt}
+                            </p>
                             <button
                               onClick={() => downloadImage(image)}
                               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
@@ -346,6 +339,24 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                               Download
                             </button>
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Product Details */}
+                {result.products && result.products.length > 0 && (
+                  <div className="bg-white/10 rounded-xl p-6">
+                    <h3 className="text-lg font-semibold text-white mb-4">Products Detected</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {result.products.map((product, i) => (
+                        <div key={i} className="bg-white/5 rounded-lg p-4">
+                          <p className="text-white font-medium">{product.product_name}</p>
+                          <p className="text-white/60 text-sm">Type: {product.product_type}</p>
+                          {product.brand_name && (
+                            <p className="text-white/60 text-sm">Brand: {product.brand_name}</p>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -377,7 +388,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     )
   }
 
-  // Main dashboard view
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
       <div className="max-w-6xl mx-auto">
@@ -389,13 +399,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               <p className="text-white/80">Create amazing content with AI</p>
             </div>
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/profile')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
-              >
-                <User className="w-4 h-4" />
-                Profile
-              </button>
               <button
                 onClick={() => router.push('/dashboard/history')}
                 className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
@@ -456,6 +459,41 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
           <h2 className="text-2xl font-bold text-white mb-6 text-center">Create New Content</h2>
 
+          {/* Processing Overlay */}
+          {processing && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 max-w-md w-full mx-4 border border-white/20">
+                <div className="text-center">
+                  <div className="relative w-32 h-32 mx-auto mb-6">
+                    <div className="absolute inset-0 border-4 border-white/20 rounded-full"></div>
+                    <div className="absolute inset-0 border-4 border-transparent border-t-white rounded-full animate-spin"></div>
+                    <Sparkles className="absolute inset-0 m-auto w-12 h-12 text-white animate-pulse" />
+                  </div>
+                  
+                  <h3 className="text-2xl font-bold text-white mb-4">Creating Magic ✨</h3>
+                  
+                  <div className="mb-6">
+                    <p className="text-white/80 mb-2">{loadingMessage}</p>
+                    {processingStep && (
+                      <p className="text-white/60 text-sm">{processingStep}</p>
+                    )}
+                  </div>
+                  
+                  <div className="w-full bg-white/20 rounded-full h-2 mb-4">
+                    <div 
+                      className="bg-gradient-to-r from-purple-500 to-pink-500 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  
+                  <p className="text-white/60 text-sm">
+                    This usually takes 30-60 seconds depending on the number of images
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Upload Area */}
           <div
             className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all ${
@@ -479,89 +517,34 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 className="hidden"
               />
             </label>
+            <p className="text-white/40 text-sm mt-4">
+              Supported formats: JPEG, PNG, WEBP (Max 10MB per file)
+            </p>
           </div>
 
           {/* File List */}
           {files.length > 0 && (
             <div className="mt-6 space-y-2">
               {files.map((file, i) => (
-                <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between">
-                  <span className="text-white text-sm truncate flex-1">{file.name}</span>
+                <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between group hover:bg-white/15 transition">
+                  <div className="flex items-center gap-3 flex-1">
+                    <ImageIcon className="w-5 h-5 text-white/60" />
+                    <span className="text-white text-sm truncate flex-1">{file.name}</span>
+                    <span className="text-white/40 text-xs">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
                   <button
                     onClick={() => removeFile(i)}
-                    className="text-white/60 hover:text-white ml-2"
+                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition"
                   >
-                    ✕
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Scan Results Display */}
-          {showScanResults && scanResults && !result && (
-            <div className="mt-6 bg-white/10 backdrop-blur-md rounded-xl p-6 border border-white/20">
-              <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-                <Sparkles className="w-6 h-6" />
-                Product Scan Results
-              </h3>
-              
-              {scanResults.products && scanResults.products.length > 0 ? (
-                <div className="space-y-3">
-                  {scanResults.products.map((product: any, index: number) => (
-                    <div key={index} className="bg-white/10 rounded-lg p-4">
-                      <h4 className="text-white font-medium">{product.product_name}</h4>
-                      <p className="text-white/70 text-sm">Type: {product.product_type}</p>
-                      {product.brand_name && (
-                        <p className="text-white/70 text-sm">Brand: {product.brand_name}</p>
-                      )}
-                    </div>
-                  ))}
-                  
-                  {scanResults.has_avatar && (
-                    <div className="bg-purple-500/20 rounded-lg p-4 border border-purple-400/40">
-                      <p className="text-purple-200">
-                        ✨ Avatar detected: {scanResults.avatar_type}
-                      </p>
-                    </div>
-                  )}
-                  
-                  {generateImages && (
-                    <div className="mt-4 pt-4 border-t border-white/20">
-                      <p className="text-white/80 text-sm flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-green-400" />
-                        Ready to generate {scanResults.prompts?.length || 3} enhanced marketing images
-                      </p>
-                      {processing && (
-                        <p className="text-white/60 text-sm mt-2 flex items-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating images...
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : scanResults.has_avatar && !scanResults.products?.length ? (
-                <div className="bg-purple-500/20 rounded-lg p-4 border border-purple-400/40">
-                  <p className="text-purple-200">
-                    ✨ Avatar detected ({scanResults.avatar_type}), but no products found.
-                  </p>
-                  <p className="text-purple-200/80 text-sm mt-2">
-                    Please upload at least one product image along with your avatar to generate marketing content.
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-yellow-500/20 rounded-lg p-4 border border-yellow-400/40">
-                  <p className="text-yellow-200">
-                    ⚠️ No products detected. Please upload clear product images.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Options */}
-          {files.length > 0 && !showScanResults && (
+          {files.length > 0 && (
             <>
               {/* Image Size Selection */}
               <div className="mt-6 bg-white/5 rounded-xl p-6">
@@ -641,17 +624,33 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 {processing ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    {showScanResults && scanResults?.products?.length ? 'Generating Images...' : 'Scanning Products...'}
+                    Processing...
                   </>
                 ) : (
                   <>
                     {generateImages ? <Wand2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                    {generateImages ? 'Scan & Generate' : 'Scan Products Only'}
+                    Create {IMAGE_SIZES[selectedSize].label}
                     {generateImages && ` (${requiredCredits} credit${requiredCredits > 1 ? 's' : ''})`}
                   </>
                 )}
               </button>
             </>
+          )}
+
+          {/* Product Scanner Notice */}
+          {files.length > 0 && (
+            <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+              <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                How it works
+              </h4>
+              <ul className="text-white/80 text-sm space-y-1">
+                <li>• Upload product photos, avatars, or both</li>
+                <li>• AI scans and identifies your products automatically</li>
+                <li>• Get professionally enhanced marketing visuals</li>
+                <li>• Download and use on your chosen platform</li>
+              </ul>
+            </div>
           )}
         </div>
       </div>
