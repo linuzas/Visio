@@ -1,4 +1,5 @@
 // File: visual-god-app/frontend/components/dashboard/stats-content.tsx
+// REPLACE your existing stats-content.tsx with this version
 
 'use client'
 
@@ -24,10 +25,11 @@ interface Stats {
   plan: string
 }
 
+// ✅ FIXED: Added user to the interface
 interface StatsContentProps {
   stats: Stats
   usage: UsageLog[]
-  user: any
+  user: any  // Added missing user property
 }
 
 export function StatsContent({ stats, usage, user }: StatsContentProps) {
