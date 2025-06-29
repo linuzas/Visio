@@ -15,7 +15,7 @@ import httpx
 from PIL import Image
 import io
 
-# 🎯 UPDATED: New size mapping for your requirements
+# 🎯 SIZE MAPPING for your requirements
 SIZE_MAPPING = {
     "instagram": "1080x1920",  # Instagram Reels (9:16)
     "facebook": "1080x1080",   # Facebook Photo Ad (1:1)
@@ -34,6 +34,7 @@ class AgentState(TypedDict):
     generate_images_flag: Optional[bool]
     image_data_list: Optional[List[dict]]
     image_size: Optional[str]
+    validation_results: Optional[List[dict]]  # NEW: Store validation results
 
 # === UTILS ===
 def get_llm():
@@ -43,8 +44,8 @@ def get_openai_client():
     """Create OpenAI client with extended timeout for Railway deployment"""
     return OpenAI(
         api_key=os.environ.get('OPENAI_API_KEY'),
-        timeout=180.0,        # Simple 3-minute timeout
-        max_retries=1         # Reduce retries to save time
+        timeout=180.0,
+        max_retries=1
     )
 
 def resize_image_to_target(image_base64: str, target_size: str) -> str:
@@ -78,76 +79,96 @@ def resize_image_to_target(image_base64: str, target_size: str) -> str:
 
     except Exception as e:
         print(f"❌ Error resizing image: {e}")
-        return image_base64  # Return original if resize fails
+        return image_base64
 
-# === VALIDATE PRODUCT IMAGES NODE ===
-def validate_product_images(state: AgentState) -> AgentState:
-    print("🔄 Executing validate_product_images…")
+# === NEW: VALIDATE AND CATEGORIZE IMAGES ===
+def validate_and_categorize_images(state: AgentState) -> AgentState:
+    """Validate and categorize uploaded images before processing"""
+    print("🔄 Executing validate_and_categorize_images…")
     image_data_list = state.get("image_data_list", [])
+    
     if not image_data_list:
         return {
             **state,
             "current_step": "no_images",
+            "validation_results": [],
             "messages": state.get("messages", []) + [
                 AIMessage(content="❌ No images provided")
             ]
         }
 
     client = get_openai_client()
-    valid_products: List[dict] = []
-    rejected_images: List[str] = []
+    validation_results = []
 
     try:
-        print("   Validating images are products only…")
+        print(f"   Validating and categorizing {len(image_data_list)} images…")
+        
         for i, img_data in enumerate(image_data_list):
-            print(f"   Validating image {i+1}/{len(image_data_list)}…")
+            print(f"   Processing image {i+1}/{len(image_data_list)}…")
+            
+            # Enhanced validation prompt
             response = client.chat.completions.create(
                 model="gpt-4o",
                 temperature=0,
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": (
-                            "Is this a clear photo of a physical product (food, cosmetics, electronics, clothing, etc.)? "
-                            "Do NOT accept people, avatars, or scenes. Only accept clear product photos. "
-                            "Respond with ONLY YES or NO."
-                        )},
+                        {"type": "text", "text": """
+Analyze this image and provide a JSON response with the following structure:
+{
+    "is_product": true/false,
+    "category": "product" or "person" or "scene" or "other",
+    "confidence": 0.0-1.0,
+    "description": "Brief description of what you see",
+    "product_name": "Name if it's a product, null otherwise",
+    "product_type": "Category if it's a product, null otherwise",
+    "rejection_reason": "Why rejected if not a product, null otherwise"
+}
+
+Only accept clear photos of physical products (food, cosmetics, electronics, clothing, etc.). 
+Reject people, avatars, scenes, text screenshots, or unclear images.
+                        """},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
                     ]
                 }]
             )
-            raw = response.choices[0].message.content.strip().upper()
-            is_product = raw.startswith("YES")
+            
+            try:
+                content = response.choices[0].message.content.strip()
+                start = content.find("{")
+                end = content.rfind("}") + 1
+                validation_data = json.loads(content[start:end])
+                
+                # Add original image data
+                validation_data["original_image"] = img_data
+                validation_data["index"] = i
+                
+                validation_results.append(validation_data)
+                
+                print(f"   ✅ Image {i+1} analyzed: {validation_data['category']} - {validation_data['description'][:50]}...")
+                
+            except Exception as e:
+                print(f"   ❌ Failed to parse validation for image {i+1}: {e}")
+                validation_results.append({
+                    "is_product": False,
+                    "category": "error",
+                    "confidence": 0.0,
+                    "description": "Failed to analyze image",
+                    "product_name": None,
+                    "product_type": None,
+                    "rejection_reason": "Analysis failed",
+                    "original_image": img_data,
+                    "index": i
+                })
 
-            if is_product:
-                valid_products.append(img_data)
-                print(f"   ✅ Image {i+1} validated as product")
-            else:
-                rejected_images.append(img_data.get('filename', f"image_{i+1}"))
-                print(f"   ❌ Image {i+1} rejected (not a product)")
-
-        if not valid_products:
-            print("   ❌ No valid products found across all images")
-            return {
-                **state,
-                "current_step": "no_valid_products",
-                "messages": state.get("messages", []) + [
-                    AIMessage(content="❌ No valid product images found. Please upload only product photos (no people or avatars).")
-                ]
-            }
-
-        print(f"✅ Validation complete: {len(valid_products)} valid, {len(rejected_images)} rejected")
+        print(f"✅ Validation complete: {len(validation_results)} images analyzed")
+        
         return {
             **state,
-            "image_data_list": valid_products,
-            "current_step": "products_validated",
+            "validation_results": validation_results,
+            "current_step": "images_validated",
             "messages": state.get("messages", []) + [
-                AIMessage(content=(
-                    f"✅ Validated {len(valid_products)} product image"
-                    f"{'s' if len(valid_products)>1 else ''}; "
-                    f"rejected {len(rejected_images)} non-product image"
-                    f"{'s' if len(rejected_images)>1 else ''}."
-                ))
+                AIMessage(content=f"🔍 Analyzed {len(validation_results)} images")
             ]
         }
 
@@ -156,77 +177,72 @@ def validate_product_images(state: AgentState) -> AgentState:
         return {
             **state,
             "current_step": "validation_failed",
+            "validation_results": [],
             "messages": state.get("messages", []) + [
                 AIMessage(content=f"❌ Validation failed: {e}")
             ]
         }
 
-# === SCAN PRODUCTS NODE ===
-def scan_products_and_store(state: AgentState) -> AgentState:
-    print("🔄 Executing scan_products_and_store…")
-    image_data_list = state.get("image_data_list", [])
-    if not image_data_list:
-        print("   No image data available")
+# === FILTER VALID PRODUCTS ===
+def filter_valid_products(state: AgentState) -> AgentState:
+    """Filter and prepare valid products for processing"""
+    print("🔄 Executing filter_valid_products…")
+    validation_results = state.get("validation_results", [])
+    
+    if not validation_results:
         return {
             **state,
-            "current_step": "no_images_for_scanning",
+            "current_step": "no_validation_results",
             "messages": state.get("messages", []) + [
-                AIMessage(content="❌ No images available for scanning")
+                AIMessage(content="❌ No validation results found")
             ]
         }
 
-    client = get_openai_client()
-    product_data: List[dict] = []
-
-    try:
-        for i, img_data in enumerate(image_data_list):
-            print(f"   Scanning product: {img_data.get('filename', f'image_{i+1}')}")
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": (
-                            "Identify the product in this image. Be specific about the product name. "
-                            "Return ONLY JSON in the format:\n"
-                            "{\"product_name\": \"Specific Product Name\", \"product_type\": \"category\", \"brand_name\": \"Brand Name or null\"}"
-                        )},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
-                    ]
-                }]
-            )
-
-            content = response.choices[0].message.content.strip()
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            data = json.loads(content[start:end])
-            data["original_image"] = img_data
-            product_data.append(data)
-            print(f"   Product identified: {data}")
-
-        result = {
-            **state,
-            "products_scanned": product_data,
-            "current_step": "products_scanned",
-            "messages": state.get("messages", []) + [
-                AIMessage(content=f"🔍 Identified {len(product_data)} product(s)")
-            ]
-        }
-        print(f"✅ Product scanning complete: {len(product_data)} products")
-        return result
-
-    except Exception as e:
-        print(f"   Product scanning error: {e}")
+    # Filter valid products (confidence > 0.7 and is_product = True)
+    valid_products = [
+        result for result in validation_results 
+        if result.get("is_product", False) and result.get("confidence", 0) > 0.7
+    ]
+    
+    if not valid_products:
+        print("   ❌ No valid products found")
         return {
             **state,
-            "current_step": "product_scan_failed",
+            "current_step": "no_valid_products",
             "messages": state.get("messages", []) + [
-                AIMessage(content=f"❌ Scanning error: {e}")
+                AIMessage(content="❌ No valid product images found. Please upload clear photos of physical products only.")
             ]
         }
+
+    # Convert to the format expected by downstream processing
+    products_scanned = []
+    valid_image_data = []
+    
+    for result in valid_products:
+        product_data = {
+            "product_name": result.get("product_name", "Unknown Product"),
+            "product_type": result.get("product_type", "Product"),
+            "brand_name": None,  # Could be enhanced later
+            "original_image": result["original_image"]
+        }
+        products_scanned.append(product_data)
+        valid_image_data.append(result["original_image"])
+
+    print(f"✅ Filtered products: {len(valid_products)} valid products found")
+    
+    return {
+        **state,
+        "products_scanned": products_scanned,
+        "image_data_list": valid_image_data,
+        "current_step": "products_filtered",
+        "messages": state.get("messages", []) + [
+            AIMessage(content=f"✅ Found {len(valid_products)} valid product image{'s' if len(valid_products) > 1 else ''}")
+        ]
+    }
 
 # === GENERATE SPECIFIC PROMPTS FOR EACH PRODUCT ===
 def generate_specific_prompts(state: AgentState) -> AgentState:
+    """Generate 3 specific marketing prompts for each product"""
     print("🔄 Executing generate_specific_prompts…")
     products = state.get("products_scanned", [])
     if not products:
@@ -275,6 +291,7 @@ def generate_specific_prompts(state: AgentState) -> AgentState:
 
 # === GENERATE IMAGES WITH GPT-IMAGE-1 ===
 def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
+    """Generate images using GPT-Image-1 with smaller file sizes"""
     print("🎨 Executing GPT-Image-1 generation for all products...")
     generate_flag = state.get("generate_images_flag", True)
     if not generate_flag:
@@ -321,8 +338,28 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
             input_image_data = image_data_list[0]
             image_bytes = base64.b64decode(input_image_data['base64'])
 
+            # Compress image before sending to reduce 413 errors
+            image = Image.open(io.BytesIO(image_bytes))
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Resize if too large (max 4MB for OpenAI)
+            max_size = 1024  # Reduce max dimension
+            if max(image.width, image.height) > max_size:
+                ratio = max_size / max(image.width, image.height)
+                new_width = int(image.width * ratio)
+                new_height = int(image.height * ratio)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # Save compressed image
+            buffer = io.BytesIO()
+            image.save(buffer, format='JPEG', quality=85, optimize=True)  # Reduced quality
+            compressed_bytes = buffer.getvalue()
+            
+            print(f"   Original size: {len(image_bytes)} bytes, Compressed: {len(compressed_bytes)} bytes")
+
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
-                temp_file.write(image_bytes)
+                temp_file.write(compressed_bytes)
                 temp_file_path = temp_file.name
 
             try:
@@ -405,8 +442,10 @@ def invalid_upload(state: AgentState) -> AgentState:
 def decide_next_step(state: AgentState) -> str:
     print("🔄 Executing decide_next_step…")
     current_step = state.get("current_step")
-    if current_step == "products_validated":
-        return "scan_products_and_store"
+    if current_step == "images_validated":
+        return "filter_valid_products"
+    elif current_step == "products_filtered":
+        return "generate_specific_prompts"
     elif current_step == "no_valid_products":
         return "invalid_upload"
     else:
@@ -414,33 +453,39 @@ def decide_next_step(state: AgentState) -> str:
 
 # === GRAPH BUILDER ===
 def build_product_only_agent():
-    print("🏗️ Building product-only agent with 3 specific prompts per product…")
+    print("🏗️ Building enhanced product-only agent with validation…")
     graph = StateGraph(AgentState)
-    graph.add_node("validate_product_images", validate_product_images)
-    graph.add_node("scan_products_and_store", scan_products_and_store)
+    
+    # Add nodes
+    graph.add_node("validate_and_categorize_images", validate_and_categorize_images)
+    graph.add_node("filter_valid_products", filter_valid_products)
     graph.add_node("generate_specific_prompts", generate_specific_prompts)
     graph.add_node("generate_images_with_gpt_image_1", generate_images_with_gpt_image_1)
     graph.add_node("invalid_upload", invalid_upload)
     graph.add_node("end_processing", end_processing)
 
-    graph.set_entry_point("validate_product_images")
+    # Set entry point
+    graph.set_entry_point("validate_and_categorize_images")
+    
+    # Add conditional edges
     graph.add_conditional_edges(
-        "validate_product_images",
+        "validate_and_categorize_images",
         decide_next_step,
         {
-            "scan_products_and_store": "scan_products_and_store",
+            "filter_valid_products": "filter_valid_products",
             "invalid_upload": "invalid_upload",
             "end_processing": "end_processing"
         }
     )
 
-    graph.add_edge("scan_products_and_store", "generate_specific_prompts")
+    # Add regular edges
+    graph.add_edge("filter_valid_products", "generate_specific_prompts")
     graph.add_edge("generate_specific_prompts", "generate_images_with_gpt_image_1")
     graph.add_edge("generate_images_with_gpt_image_1", "end_processing")
     graph.add_edge("invalid_upload", "end_processing")
     graph.add_edge("end_processing", END)
 
-    print("✅ Product-only agent built successfully with 3 specific prompts per product")
+    print("✅ Enhanced product-only agent built successfully")
     return graph.compile()
 
 # === MAIN AGENT CLASS ===
@@ -450,8 +495,49 @@ class ContentAgent:
         if not os.environ.get('OPENAI_API_KEY'):
             raise ValueError("OPENAI_API_KEY environment variable is required")
 
+    def validate_images(self, image_data_list: List[Dict]) -> Dict:
+        """Validate and categorize images without generating"""
+        try:
+            print(f"🔄 Validating {len(image_data_list)} images…")
+
+            initial_state = {
+                "messages": [HumanMessage(content="Validating images...")],
+                "image_data_list": image_data_list,
+                "generate_images_flag": False,  # Don't generate, just validate
+                "current_step": "initialized"
+            }
+
+            # Run only validation step
+            validation_state = validate_and_categorize_images(initial_state)
+            
+            validation_results = validation_state.get("validation_results", [])
+            
+            # Categorize results
+            products = [r for r in validation_results if r.get("is_product", False) and r.get("confidence", 0) > 0.7]
+            non_products = [r for r in validation_results if not (r.get("is_product", False) and r.get("confidence", 0) > 0.7)]
+            
+            return {
+                "success": True,
+                "validation_results": validation_results,
+                "valid_products": products,
+                "rejected_images": non_products,
+                "can_proceed": len(products) > 0,
+                "message": f"Found {len(products)} valid product(s) and {len(non_products)} non-product image(s)"
+            }
+
+        except Exception as e:
+            print(f"❌ Validation failed: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Validation failed: {str(e)}",
+                "validation_results": [],
+                "valid_products": [],
+                "rejected_images": [],
+                "can_proceed": False
+            }
+
     def process(self, image_data_list: List[Dict], generate_images: bool = True, image_size: str = "instagram") -> Dict:
-        """Main processing pipeline for product-only images with 3 specific prompts per product"""
+        """Main processing pipeline with enhanced validation"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
             print(f"🔄 Processing {len(image_data_list)} images (products only, target: {target_size})…")
@@ -466,8 +552,21 @@ class ContentAgent:
 
             final_state = self.agent.invoke(initial_state)
 
+            # Handle cancellation gracefully
+            if final_state.get("current_step") == "cancelled":
+                return {
+                    "success": False,
+                    "cancelled": True,
+                    "message": "Processing was cancelled",
+                    "descriptions": [],
+                    "products": [],
+                    "prompts": [],
+                    "generated_images": []
+                }
+
             result = {
                 "success": final_state.get("current_step") == "processing_complete",
+                "validation_results": final_state.get("validation_results", []),
                 "descriptions": ["product"] * len(final_state.get("products_scanned", [])),
                 "products": final_state.get("products_scanned", []),
                 "prompts": final_state.get("edit_prompts", []),
@@ -507,7 +606,7 @@ class ContentAgent:
             }
 
     def generate_images(self, prompts: List[str], images_data: List[Dict], max_images: int = 3, image_size: str = "instagram") -> List[Dict]:
-        """Generate images using provided prompts and images (3 per product)"""
+        """Generate images using provided prompts and images"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
             print(f"🎨 Generating {target_size} images…")

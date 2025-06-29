@@ -1,4 +1,6 @@
-// visual-god-app/frontend/app/dashboard/stats/page.tsx
+// File: visual-god-app/frontend/app/dashboard/stats/page.tsx
+// REPLACE your existing stats/page.tsx with this
+
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
 import { StatsContent } from '@/components/dashboard/stats-content'
@@ -36,5 +38,11 @@ export default async function StatsPage() {
     total_products_scanned: 0
   }
 
-  return <StatsContent stats={stats} usage={usageResult.data || []} />
+  return (
+    <StatsContent 
+      stats={stats} 
+      usage={usageResult.data || []} 
+      user={user} 
+    />
+  )
 }

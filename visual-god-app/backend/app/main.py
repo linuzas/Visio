@@ -28,6 +28,47 @@ app = FastAPI(
     version="2.0.0"
 )
 
+@app.post("/api/validate")
+async def validate_images(request: dict):
+    """
+    Validate and categorize uploaded images without generating
+    """
+    try:
+        images = request.get('images', [])
+        user_id = request.get('userId')
+        
+        logger.info(f"Validating {len(images)} images for user {user_id}")
+        
+        if not images:
+            return {
+                "success": False,
+                "error": "No images provided"
+            }
+        
+        # Convert to format expected by agent
+        images_data = [
+            {"base64": img["base64"], "filename": img["filename"]} 
+            for img in images
+        ]
+        
+        # Use agent's validate_images method
+        result = agent.validate_images(images_data)
+        
+        logger.info(f"Validation completed: {result.get('message', 'Unknown result')}")
+        
+        return result
+            
+    except Exception as e:
+        logger.error(f"Validation error: {e}")
+        return {
+            "success": False,
+            "error": f"Validation failed: {str(e)}",
+            "validation_results": [],
+            "valid_products": [],
+            "rejected_images": [],
+            "can_proceed": False
+        }
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,

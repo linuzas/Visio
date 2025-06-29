@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/app/dashboard/history/page.tsx
+// REPLACE your existing history/page.tsx with this
+
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
 import { HistoryContent } from '@/components/dashboard/history-content'
@@ -22,12 +25,18 @@ export default async function HistoryPage() {
         prompt_text,
         platform,
         size,
-        created_at
+        created_at,
+        metadata
       )
     `)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(50)
 
-  return <HistoryContent sessions={sessions || []} />
+  return (
+    <HistoryContent 
+      sessions={sessions || []} 
+      user={user}
+    />
+  )
 }

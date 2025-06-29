@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/app/profile/page.tsx
+// REPLACE your existing profile/page.tsx with this
+
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
 import { ProfileContent } from '@/components/profile/profile-content'
@@ -41,7 +44,13 @@ export default async function ProfilePage() {
       .eq('user_id', user.id)
       .single()
 
-    return <ProfileContent profile={newProfile} stats={newStats} user={user} />
+    return (
+      <ProfileContent 
+        profile={newProfile} 
+        stats={newStats} 
+        user={user} 
+      />
+    )
   }
 
   // Handle case where stats view doesn't exist or returns null
@@ -57,5 +66,11 @@ export default async function ProfilePage() {
     total_products_scanned: 0
   }
 
-  return <ProfileContent profile={profileResult.data} stats={stats} user={user} />
+  return (
+    <ProfileContent 
+      profile={profileResult.data} 
+      stats={stats} 
+      user={user} 
+    />
+  )
 }

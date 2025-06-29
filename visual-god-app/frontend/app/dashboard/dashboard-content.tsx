@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 
 interface GeneratedImage {
   prompt: string
@@ -16,9 +16,23 @@ interface GeneratedImage {
   prompt_type?: string
 }
 
+interface ValidationResult {
+  is_product: boolean
+  category: string
+  confidence: number
+  description: string
+  product_name?: string
+  product_type?: string
+  rejection_reason?: string
+  original_image: any
+  index: number
+}
+
 interface ProcessedResult {
   success: boolean
   error?: string
+  cancelled?: boolean
+  validation_results?: ValidationResult[]
   descriptions?: string[]
   products?: Array<{
     product_name: string
@@ -31,6 +45,7 @@ interface ProcessedResult {
   avatar_type?: string
   sessionId?: string
   message?: string
+  can_proceed?: boolean
 }
 
 const IMAGE_SIZES = {
@@ -85,16 +100,64 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [processingStep, setProcessingStep] = useState('')
-  const [detectedProducts, setDetectedProducts] = useState<any[]>([])
   const [cancelRequested, setCancelRequested] = useState(false)
+  
+  // NEW: Image validation states
+  const [showValidation, setShowValidation] = useState(false)
+  const [validationResults, setValidationResults] = useState<ValidationResult[]>([])
+  const [validating, setValidating] = useState(false)
+  const [canProceed, setCanProceed] = useState(false)
+  
   const abortControllerRef = useRef<AbortController | null>(null)
   
   const router = useRouter()
   const supabase = createClient()
 
   const creditsRemaining = stats?.credits_remaining || 0
-  // 3 images per product
-  const requiredCredits = generateImages ? files.length * 3 : 0
+  const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
+  const requiredCredits = generateImages ? validProducts.length * 3 : 0
+
+  // Navigation component
+  const Navigation = () => (
+    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 mb-8 shadow-2xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-1">Welcome back, {profile.full_name || profile.username || 'Creator'}!</h1>
+          <p className="text-white/80">Create amazing content with AI</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push('/')}
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+          >
+            <Home className="w-4 h-4" />
+            Home
+          </button>
+          <button
+            onClick={() => router.push('/profile')}
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+          >
+            <User className="w-4 h-4" />
+            Profile
+          </button>
+          <button
+            onClick={() => router.push('/dashboard/history')}
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+          >
+            <History className="w-4 h-4" />
+            History
+          </button>
+          <button
+            onClick={() => router.push('/dashboard/stats')}
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Stats
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -113,8 +176,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       abortControllerRef.current.abort()
     }
     setProcessing(false)
-    setProcessingStep('Cancelled by user')
+    setProcessingStep('')
     setUploadProgress(0)
+    // Don't show cancellation message
   }
 
   const handleDrag = (e: React.DragEvent) => {
@@ -136,6 +200,11 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       file => file.type.startsWith('image/')
     )
     setFiles(prev => [...prev, ...droppedFiles])
+    
+    // Auto-validate new files
+    if (droppedFiles.length > 0) {
+      validateImages([...files, ...droppedFiles])
+    }
   }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,11 +213,79 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         file => file.type.startsWith('image/')
       )
       setFiles(prev => [...prev, ...selectedFiles])
+      
+      // Auto-validate new files
+      if (selectedFiles.length > 0) {
+        validateImages([...files, ...selectedFiles])
+      }
     }
   }
 
   const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index))
+    const newFiles = files.filter((_, i) => i !== index)
+    setFiles(newFiles)
+    
+    // Re-validate remaining files
+    if (newFiles.length > 0) {
+      validateImages(newFiles)
+    } else {
+      setValidationResults([])
+      setCanProceed(false)
+      setShowValidation(false)
+    }
+  }
+
+  // NEW: Validate images function
+  const validateImages = async (filesToValidate: File[] = files) => {
+    if (filesToValidate.length === 0) return
+
+    setValidating(true)
+    setShowValidation(true)
+
+    try {
+      // Convert files to base64
+      const imagePromises = filesToValidate.map((file) => {
+        return new Promise<{ base64: string; filename: string }>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            const base64 = e.target?.result as string
+            resolve({
+              base64: base64.split(',')[1],
+              filename: file.name
+            })
+          }
+          reader.readAsDataURL(file)
+        })
+      })
+
+      const images = await Promise.all(imagePromises)
+
+      // Call validation API
+      const response = await fetch('/api/validate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ images })
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setValidationResults(data.validation_results || [])
+        setCanProceed(data.can_proceed || false)
+      } else {
+        setValidationResults([])
+        setCanProceed(false)
+      }
+
+    } catch (error) {
+      console.error('Validation error:', error)
+      setValidationResults([])
+      setCanProceed(false)
+    } finally {
+      setValidating(false)
+    }
   }
 
   const downloadImage = (image: GeneratedImage) => {
@@ -162,7 +299,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   }
 
   const processImages = async () => {
-    if (files.length === 0) return
+    if (!canProceed) {
+      alert('Please upload valid product images before proceeding.')
+      return
+    }
 
     // Check credits
     if (generateImages && creditsRemaining < requiredCredits) {
@@ -174,7 +314,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setResult(null)
     setUploadProgress(0)
     setCancelRequested(false)
-    setDetectedProducts([])
     
     // Create new abort controller
     abortControllerRef.current = new AbortController()
@@ -203,8 +342,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       const images = await Promise.all(imagePromises)
       
       if (cancelRequested) {
-        setResult({ success: false, error: 'Processing cancelled' })
-        return
+        return // Exit silently on cancellation
       }
 
       setUploadProgress(30)
@@ -219,7 +357,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           status: 'processing',
           metadata: {
             platform: selectedSize,
-            product_count: files.length
+            product_count: validProducts.length
           }
         })
         .select()
@@ -232,7 +370,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       
       setUploadProgress(40)
 
-      // Store uploaded images (without bucket dependency for now)
+      // Store uploaded images
       for (const [index, img] of images.entries()) {
         await supabase.from('uploaded_images').insert({
           session_id: session.id,
@@ -263,25 +401,16 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       setUploadProgress(70)
 
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error('Image files are too large. Please use smaller images (under 4MB each).')
+        }
         throw new Error(`API Error: ${response.status}`)
       }
 
       const data = await response.json()
       
-      // Handle validation errors specially
-      if (!data.success && data.error?.includes('No valid product images')) {
-        setProcessingStep('')
-        setResult({
-          success: false,
-          error: '❌ Please upload only product images. No people or avatars allowed.',
-          message: 'Only clear photos of physical products are accepted.'
-        })
-        return
-      }
-      
-      // Show detected products
-      if (data.products) {
-        setDetectedProducts(data.products)
+      if (cancelRequested) {
+        return // Exit silently on cancellation
       }
       
       setUploadProgress(90)
@@ -297,7 +426,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         })
         .eq('id', session.id)
 
-      // Save generated images to database (without bucket upload for now)
+      // Save generated images to database
       if (data.success && data.generated_images && session.id) {
         for (const [index, img] of data.generated_images.entries()) {
           await supabase.from('generated_images').insert({
@@ -328,7 +457,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           metadata: { 
             platform: selectedSize, 
             image_count: creditsUsed,
-            product_count: data.products?.length || 0
+            product_count: validProducts.length
           }
         })
 
@@ -346,11 +475,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       router.refresh() // Refresh to update credits
 
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        setResult({
-          success: false,
-          error: 'Processing cancelled by user'
-        })
+      if (error.name === 'AbortError' || cancelRequested) {
+        // Handle cancellation silently - don't show error
+        return
       } else {
         setResult({
           success: false,
@@ -369,19 +496,111 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setFiles([])
     setResult(null)
     setUploadProgress(0)
-    setDetectedProducts([])
+    setValidationResults([])
+    setCanProceed(false)
+    setShowValidation(false)
     setCancelRequested(false)
   }
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
+  // Validation Results Component
+  const ValidationResults = () => {
+    if (!showValidation || validationResults.length === 0) return null
+
+    const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
+    const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
+
+    return (
+      <div className="mt-6 bg-white/10 rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-white font-semibold text-lg flex items-center gap-2">
+            <Eye className="w-5 h-5" />
+            Image Analysis Results
+          </h3>
+          <button
+            onClick={() => setShowValidation(!showValidation)}
+            className="text-white/60 hover:text-white"
+          >
+            {showValidation ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+
+        {validating ? (
+          <div className="text-center py-4">
+            <Loader2 className="w-6 h-6 animate-spin text-white mx-auto mb-2" />
+            <p className="text-white/80">Analyzing images...</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Valid Products */}
+            {validProducts.length > 0 && (
+              <div>
+                <h4 className="text-green-300 font-medium mb-2 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Valid Products ({validProducts.length})
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {validProducts.map((result, i) => (
+                    <div key={i} className="bg-green-500/20 border border-green-500/40 rounded-lg p-3">
+                      <p className="text-green-200 font-medium">{result.product_name || 'Product'}</p>
+                      <p className="text-green-300/80 text-sm">{result.description}</p>
+                      <p className="text-green-300/60 text-xs">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Rejected Images */}
+            {rejectedImages.length > 0 && (
+              <div>
+                <h4 className="text-red-300 font-medium mb-2 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  Rejected Images ({rejectedImages.length})
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {rejectedImages.map((result, i) => (
+                    <div key={i} className="bg-red-500/20 border border-red-500/40 rounded-lg p-3">
+                      <p className="text-red-200 font-medium">{result.category}</p>
+                      <p className="text-red-300/80 text-sm">{result.description}</p>
+                      {result.rejection_reason && (
+                        <p className="text-red-300/60 text-xs">{result.rejection_reason}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Proceed Button */}
+            <div className="mt-4 p-4 bg-white/5 rounded-lg">
+              {canProceed ? (
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-400" />
+                  <p className="text-green-300">
+                    Ready to proceed! Found {validProducts.length} valid product{validProducts.length !== 1 ? 's' : ''}.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-400" />
+                  <p className="text-red-300">
+                    Cannot proceed. Please upload at least one clear product image.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   if (result) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
         <div className="max-w-6xl mx-auto">
+          <Navigation />
+          
           <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
             <div className="flex items-center justify-between mb-8">
               <h1 className="text-4xl font-bold text-white flex items-center gap-3">
@@ -393,12 +612,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                   <span className="text-white/80 text-sm">Credits:</span>
                   <span className="text-white font-semibold ml-2">{creditsRemaining - (result.generated_images?.length || 0)}</span>
                 </div>
-                <button
-                  onClick={handleLogout}
-                  className="text-white/80 hover:text-white transition duration-200"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
               </div>
             </div>
 
@@ -528,51 +741,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 mb-8 shadow-2xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-white mb-1">Welcome back, {profile.full_name || profile.username || 'Creator'}!</h1>
-              <p className="text-white/80">Create amazing content with AI</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => router.push('/')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
-              >
-                <Home className="w-4 h-4" />
-                Home
-              </button>
-              <button
-                onClick={() => router.push('/profile')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
-              >
-                <User className="w-4 h-4" />
-                Profile
-              </button>
-              <button
-                onClick={() => router.push('/dashboard/history')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
-              >
-                <History className="w-4 h-4" />
-                History
-              </button>
-              <button
-                onClick={() => router.push('/dashboard/stats')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Stats
-              </button>
-              <button
-                onClick={handleLogout}
-                className="text-white/80 hover:text-white transition-all duration-200 transform hover:scale-110"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
+        <Navigation />
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -677,7 +846,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               />
             </label>
             <p className="text-white/40 text-sm mt-4">
-              Upload product images only (no people/avatars) • JPEG, PNG, WEBP • Max 10MB
+              Upload product images only (no people/avatars) • JPEG, PNG, WEBP • Max 4MB each
             </p>
           </div>
 
@@ -701,6 +870,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               ))}
             </div>
           )}
+
+          {/* Validation Results */}
+          <ValidationResults />
 
           {/* Options */}
           {files.length > 0 && (
@@ -756,70 +928,81 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               </div>
 
               {/* Credits Info */}
-             <div className="mt-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
-               <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-                 <Sparkles className="w-4 h-4" />
-                 Credits Information
-               </h4>
-               <ul className="text-white/80 text-sm space-y-1">
-                 <li>• Each product generates 3 unique marketing styles</li>
-                 <li>• {files.length} product{files.length !== 1 ? 's' : ''} × 3 styles = {requiredCredits} credits needed</li>
-                 <li>• You have {creditsRemaining} credits available</li>
-               </ul>
-             </div>
+              <div className="mt-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+                <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  Credits Information
+                </h4>
+                <ul className="text-white/80 text-sm space-y-1">
+                  <li>• Each valid product generates 3 unique marketing styles</li>
+                  <li>• {validProducts.length} valid product{validProducts.length !== 1 ? 's' : ''} × 3 styles = {requiredCredits} credits needed</li>
+                  <li>• You have {creditsRemaining} credits available</li>
+                </ul>
+              </div>
 
-             {/* Credits Warning */}
-             {generateImages && creditsRemaining < requiredCredits && (
-               <div className="mt-4 bg-red-500/20 border border-red-500/40 rounded-lg p-4">
-                 <p className="text-red-200 text-sm flex items-center gap-2">
-                   <AlertCircle className="w-4 h-4" />
-                   Not enough credits. You need {requiredCredits} credits but only have {creditsRemaining}.
-                   <a href="/pricing" className="underline ml-1 hover:text-red-100">Get more credits</a>
-                 </p>
-               </div>
-             )}
+              {/* Credits Warning */}
+              {generateImages && creditsRemaining < requiredCredits && (
+                <div className="mt-4 bg-red-500/20 border border-red-500/40 rounded-lg p-4">
+                  <p className="text-red-200 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Not enough credits. You need {requiredCredits} credits but only have {creditsRemaining}.
+                    <a href="/pricing" className="underline ml-1 hover:text-red-100">Get more credits</a>
+                  </p>
+                </div>
+              )}
 
-             <button
-               onClick={processImages}
-               disabled={processing || (generateImages && creditsRemaining < requiredCredits)}
-               className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:hover:scale-100"
-             >
-               {processing ? (
-                 <>
-                   <Loader2 className="w-5 h-5 animate-spin" />
-                   Processing...
-                 </>
-               ) : (
-                 <>
-                   <Wand2 className="w-5 h-5" />
-                   Create Marketing Visuals
-                   {generateImages && ` (${requiredCredits} credits)`}
-                 </>
-               )}
-             </button>
-           </>
-         )}
+              {/* Cannot Proceed Warning */}
+              {!canProceed && files.length > 0 && (
+                <div className="mt-4 bg-yellow-500/20 border border-yellow-500/40 rounded-lg p-4">
+                  <p className="text-yellow-200 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Please upload at least one valid product image to proceed with generation.
+                  </p>
+                </div>
+              )}
 
-         {/* How It Works */}
-         {files.length === 0 && (
-           <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
-             <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-               <Sparkles className="w-4 h-4" />
-               How it works
-             </h4>
-             <ul className="text-white/80 text-sm space-y-1">
-               <li>• Upload clear product photos (no people or avatars)</li>
-               <li>• AI identifies and analyzes your products</li>
-               <li>• Get 3 unique marketing styles per product:</li>
-               <li className="ml-4">- Street-level giant product perspective</li>
-               <li className="ml-4">- 3D billboard advertisement style</li>
-               <li className="ml-4">- Premium editorial catalog layout</li>
-               <li>• Download and use on your chosen platform</li>
-             </ul>
-           </div>
-         )}
-       </div>
-     </div>
-   </div>
- )
+              <button
+                onClick={processImages}
+                disabled={processing || !canProceed || (generateImages && creditsRemaining < requiredCredits)}
+                className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:hover:scale-100"
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-5 h-5" />
+                    Create Marketing Visuals
+                    {generateImages && canProceed && ` (${requiredCredits} credits)`}
+                  </>
+                )}
+              </button>
+            </>
+          )}
+
+          {/* How It Works */}
+          {files.length === 0 && (
+            <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+              <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                How it works
+              </h4>
+              <ul className="text-white/80 text-sm space-y-1">
+                <li>• Upload clear product photos (no people or avatars)</li>
+                <li>• AI automatically validates and categorizes your images</li>
+                <li>• Review which images are accepted as valid products</li>
+                <li>• Get 3 unique marketing styles per valid product:</li>
+                <li className="ml-4">- Street-level giant product perspective</li>
+                <li className="ml-4">- 3D billboard advertisement style</li>
+                <li className="ml-4">- Premium editorial catalog layout</li>
+                <li>• Download and use on your chosen platform</li>
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }

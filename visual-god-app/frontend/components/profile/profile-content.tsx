@@ -1,13 +1,16 @@
+// File: visual-god-app/frontend/components/profile/profile-content.tsx
+
 'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { 
-  ArrowLeft, User, Mail, CreditCard, Camera, Save, 
+  User, Mail, CreditCard, Camera, Save, 
   Loader2, CheckCircle, AlertCircle, Shield, Calendar,
   BarChart3
 } from 'lucide-react'
+import { PageNavbar } from '@/components/navigation/navbar'
 import Link from 'next/link'
 
 interface ProfileContentProps {
@@ -104,22 +107,13 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
       <div className="max-w-4xl mx-auto">
+        <PageNavbar 
+          user={user}
+          title="My Profile"
+          subtitle="Manage your account settings and preferences"
+        />
+        
         <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-8">
-            <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-              <User className="w-8 h-8" />
-              My Profile
-            </h1>
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Dashboard
-            </Link>
-          </div>
-
           {/* Message */}
           {message && (
             <div className={`mb-6 p-4 rounded-lg flex items-center gap-3 ${
@@ -143,7 +137,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
             {/* Avatar Section */}
             <div className="text-center">
               <div className="relative inline-block">
-                <div className="w-32 h-32 rounded-full bg-white/20 overflow-hidden mx-auto">
+                <div className="w-32 h-32 rounded-full bg-white/20 overflow-hidden mx-auto shadow-lg">
                   {profile?.avatar_url ? (
                     <img 
                       src={profile.avatar_url} 
@@ -156,7 +150,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                     </div>
                   )}
                 </div>
-                <label className="absolute bottom-0 right-0 bg-purple-500 hover:bg-purple-600 rounded-full p-2 cursor-pointer transition shadow-lg">
+                <label className="absolute bottom-0 right-0 bg-purple-500 hover:bg-purple-600 rounded-full p-2 cursor-pointer transition shadow-lg transform hover:scale-110">
                   <Camera className="w-5 h-5 text-white" />
                   <input
                     type="file"
@@ -178,7 +172,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
             {/* Profile Info */}
             <div className="md:col-span-2 space-y-6">
               {/* Account Info */}
-              <div className="bg-white/10 rounded-xl p-6">
+              <div className="bg-white/10 rounded-xl p-6 hover:bg-white/15 transition">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <Shield className="w-5 h-5" />
                   Account Information
@@ -191,7 +185,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                         type="text"
                         value={formData.username}
                         onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                        className="w-full bg-black/30 border border-white/30 rounded-lg px-4 py-2 text-white"
+                        className="w-full bg-black/30 border border-white/30 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-white/50"
                       />
                     ) : (
                       <p className="text-white">{profile?.username || 'Not set'}</p>
@@ -204,7 +198,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                         type="text"
                         value={formData.full_name}
                         onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                        className="w-full bg-black/30 border border-white/30 rounded-lg px-4 py-2 text-white"
+                        className="w-full bg-black/30 border border-white/30 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:border-white/50"
                       />
                     ) : (
                       <p className="text-white">{profile?.full_name || 'Not set'}</p>
@@ -225,7 +219,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                       <button
                         onClick={handleSave}
                         disabled={saving}
-                        className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-4 py-2 rounded-lg transition disabled:opacity-50"
+                        className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-4 py-2 rounded-lg transition disabled:opacity-50 transform hover:scale-105"
                       >
                         {saving ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -243,7 +237,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                             email: user?.email || ''
                           })
                         }}
-                        className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition"
+                        className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition transform hover:scale-105"
                       >
                         Cancel
                       </button>
@@ -251,7 +245,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                   ) : (
                     <button
                       onClick={() => setEditing(true)}
-                      className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition"
+                      className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg transition transform hover:scale-105"
                     >
                       Edit Profile
                     </button>
@@ -260,7 +254,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
               </div>
 
               {/* Subscription Info */}
-              <div className="bg-white/10 rounded-xl p-6">
+              <div className="bg-white/10 rounded-xl p-6 hover:bg-white/15 transition">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <CreditCard className="w-5 h-5" />
                   Subscription Details
@@ -285,7 +279,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                   {profile?.plan === 'free' && (
                     <Link
                       href="/pricing"
-                      className="block mt-4 text-center bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white py-2 rounded-lg transition"
+                      className="block mt-4 text-center bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white py-2 rounded-lg transition transform hover:scale-105"
                     >
                       Upgrade Plan
                     </Link>
@@ -294,7 +288,7 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
               </div>
 
               {/* Usage Stats */}
-              <div className="bg-white/10 rounded-xl p-6">
+              <div className="bg-white/10 rounded-xl p-6 hover:bg-white/15 transition">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <BarChart3 className="w-5 h-5" />
                   Usage Statistics
@@ -320,19 +314,19 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
               </div>
 
               {/* Security Settings */}
-              <div className="bg-white/10 rounded-xl p-6">
+              <div className="bg-white/10 rounded-xl p-6 hover:bg-white/15 transition">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <Shield className="w-5 h-5" />
                   Security
                 </h3>
                 <div className="space-y-3">
-                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4">
+                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4 transform hover:scale-105">
                     Change Password
                   </button>
-                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4">
+                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4 transform hover:scale-105">
                     Two-Factor Authentication
                   </button>
-                  <button className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-200 py-2 rounded-lg transition text-left px-4 border border-red-500/40">
+                  <button className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-200 py-2 rounded-lg transition text-left px-4 border border-red-500/40 transform hover:scale-105">
                     Delete Account
                   </button>
                 </div>
