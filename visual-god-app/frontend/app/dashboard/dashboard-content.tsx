@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle } from 'lucide-react'
 
 interface GeneratedImage {
   prompt: string
@@ -12,6 +12,8 @@ interface GeneratedImage {
   index: number
   input_image?: string
   size?: string
+  product_name?: string
+  prompt_type?: string
 }
 
 interface ProcessedResult {
@@ -54,18 +56,18 @@ const IMAGE_SIZES = {
     icon: MonitorPlay,
     description: 'Widescreen format (16:9) for all devices',
     aspect: 'Landscape',
-    credits: 2
+    credits: 1
   }
 }
 
 // Fun loading messages
 const LOADING_MESSAGES = [
-  "🎨 Analyzing your images with AI vision...",
-  "🔍 Detecting products and their features...",
-  "✨ Preparing creative prompts...",
-  "🎬 Setting up the perfect scene...",
-  "🌟 Adding some marketing magic...",
-  "🚀 Almost there, creating something amazing..."
+  "🎨 Analyzing your products with AI vision...",
+  "🔍 Detecting product features and details...",
+  "✨ Creating amazing marketing concepts...",
+  "🎬 Setting up the perfect scenes...",
+  "🌟 Adding creative magic to your products...",
+  "🚀 Almost there, preparing your visuals..."
 ]
 
 interface DashboardContentProps {
@@ -83,11 +85,15 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [processingStep, setProcessingStep] = useState('')
+  const [detectedProducts, setDetectedProducts] = useState<any[]>([])
+  const [cancelRequested, setCancelRequested] = useState(false)
+  
   const router = useRouter()
   const supabase = createClient()
 
   const creditsRemaining = stats?.credits_remaining || 0
-  const requiredCredits = generateImages ? IMAGE_SIZES[selectedSize].credits : 0
+  // 3 images per product
+  const requiredCredits = generateImages ? files.length * 3 : 0
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -97,6 +103,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       setLoadingMessage(LOADING_MESSAGES[index])
     }, 3000)
     return () => clearInterval(interval)
+  }
+
+  // Cancel processing
+  const cancelProcessing = () => {
+    setCancelRequested(true)
+    setProcessing(false)
+    setProcessingStep('Cancelled by user')
   }
 
   const handleDrag = (e: React.DragEvent) => {
@@ -137,7 +150,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     const sizeConfig = IMAGE_SIZES[selectedSize]
     const link = document.createElement('a')
     link.href = `data:image/jpeg;base64,${image.image_base64}`
-    link.download = `visual-god-${sizeConfig.label.toLowerCase().replace(/\s+/g, '-')}-${image.index + 1}.jpg`
+    link.download = `visual-god-${sizeConfig.label.toLowerCase().replace(/\s+/g, '-')}-${image.product_name?.toLowerCase().replace(/\s+/g, '-') || 'product'}-${image.prompt_type || image.index + 1}.jpg`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -155,6 +168,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setProcessing(true)
     setResult(null)
     setUploadProgress(0)
+    setCancelRequested(false)
+    setDetectedProducts([])
     
     // Start loading messages rotation
     const stopMessages = startLoadingMessages()
@@ -178,6 +193,12 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       })
 
       const images = await Promise.all(imagePromises)
+      
+      if (cancelRequested) {
+        setResult({ success: false, error: 'Processing cancelled' })
+        return
+      }
+
       setUploadProgress(30)
 
       // Create session in database
@@ -187,13 +208,28 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         .insert({
           user_id: profile.id,
           session_name: `Session ${new Date().toLocaleString()}`,
-          status: 'processing'
+          status: 'processing',
+          metadata: {
+            platform: selectedSize,
+            product_count: files.length
+          }
         })
         .select()
         .single()
 
       if (sessionError) throw sessionError
       setUploadProgress(40)
+
+      // Store uploaded images
+      for (const [index, img] of images.entries()) {
+        await supabase.from('uploaded_images').insert({
+          session_id: session.id,
+          user_id: profile.id,
+          filename: img.filename,
+          file_path: `${profile.id}/${session.id}/uploaded_${index}.jpg`,
+          metadata: { base64: img.base64 }
+        })
+      }
 
       // Call API
       setProcessingStep('Processing with AI...')
@@ -218,26 +254,67 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       }
 
       const data = await response.json()
+      
+      // Show detected products
+      if (data.products) {
+        setDetectedProducts(data.products)
+      }
+      
       setUploadProgress(90)
       
       // Update session status
+      const creditsUsed = generateImages && data.generated_images ? data.generated_images.length : 0
+      
       await supabase
         .from('generation_sessions')
         .update({
           status: data.success ? 'completed' : 'failed',
-          credits_used: generateImages ? requiredCredits : 0
+          credits_used: creditsUsed
         })
         .eq('id', session.id)
 
+      // Save generated images to database
+      if (data.success && data.generated_images && session.id) {
+        for (const [index, img] of data.generated_images.entries()) {
+          await supabase.from('generated_images').insert({
+            session_id: session.id,
+            user_id: profile.id,
+            filename: `generated_${img.product_name}_${img.prompt_type}.jpg`,
+            file_path: `${profile.id}/${session.id}/generated_${index}.jpg`,
+            prompt_text: img.prompt,
+            prompt_index: index,
+            platform: selectedSize,
+            size: img.size,
+            metadata: { 
+              base64: img.image_base64,
+              product_name: img.product_name,
+              prompt_type: img.prompt_type
+            }
+          })
+        }
+      }
+
       // Log usage if successful
-      if (data.success && generateImages) {
+      if (data.success && creditsUsed > 0) {
         await supabase.from('usage_logs').insert({
           user_id: profile.id,
           session_id: session.id,
           action: 'image_generation',
-          credits_used: requiredCredits,
-          metadata: { platform: selectedSize, image_count: data.generated_images?.length || 0 }
+          credits_used: creditsUsed,
+          metadata: { 
+            platform: selectedSize, 
+            image_count: creditsUsed,
+            product_count: data.products?.length || 0
+          }
         })
+
+        // Update user credits
+        await supabase
+          .from('profiles')
+          .update({
+            credits_used: profile.credits_used + creditsUsed
+          })
+          .eq('id', profile.id)
       }
 
       setUploadProgress(100)
@@ -260,6 +337,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setFiles([])
     setResult(null)
     setUploadProgress(0)
+    setDetectedProducts([])
   }
 
   const handleLogout = async () => {
@@ -280,7 +358,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               <div className="flex items-center gap-4">
                 <div className="bg-white/20 rounded-xl px-4 py-2">
                   <span className="text-white/80 text-sm">Credits:</span>
-                  <span className="text-white font-semibold ml-2">{creditsRemaining}</span>
+                  <span className="text-white font-semibold ml-2">{creditsRemaining - (result.generated_images?.length || 0)}</span>
                 </div>
                 <button
                   onClick={handleLogout}
@@ -302,53 +380,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                   <p className="text-white/80">{result.message}</p>
                 </div>
 
-                {/* Generated Images */}
-                {result.generated_images && result.generated_images.length > 0 && (
-                  <div className="bg-white/10 rounded-xl p-6">
-                    <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-3">
-                      <Wand2 className="w-8 h-8" />
-                      AI-Enhanced Images ({result.generated_images.length})
-                      <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
-                        {IMAGE_SIZES[selectedSize].size}
-                      </span>
-                    </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {result.generated_images.map((image, i) => (
-                        <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all">
-                          <div className={`relative group ${
-                            selectedSize === 'instagram' ? 'aspect-[9/16]' : 
-                            selectedSize === 'facebook' ? 'aspect-square' : 
-                            'aspect-[16/9]'
-                          }`}>
-                            <img
-                              src={`data:image/jpeg;base64,${image.image_base64}`}
-                              alt={`Generated ${i + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                          <div className="p-4">
-                            <p className="text-white/80 text-sm mb-3 line-clamp-2">
-                              {image.prompt}
-                            </p>
-                            <button
-                              onClick={() => downloadImage(image)}
-                              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
-                            >
-                              <Download className="w-4 h-4" />
-                              Download
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Product Details */}
+                {/* Products Detected */}
                 {result.products && result.products.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
-                    <h3 className="text-lg font-semibold text-white mb-4">Products Detected</h3>
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <Package className="w-5 h-5" />
+                      Products Detected ({result.products.length})
+                    </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {result.products.map((product, i) => (
                         <div key={i} className="bg-white/5 rounded-lg p-4">
@@ -360,6 +398,69 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Generated Images */}
+                {result.generated_images && result.generated_images.length > 0 && (
+                  <div className="bg-white/10 rounded-xl p-6">
+                    <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-3">
+                      <Wand2 className="w-8 h-8" />
+                      AI-Enhanced Images ({result.generated_images.length})
+                      <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
+                        {IMAGE_SIZES[selectedSize].size}
+                      </span>
+                    </h2>
+
+                    {/* Group images by product */}
+                    {result.products && result.products.map((product, productIdx) => {
+                      const productImages = result.generated_images?.filter(
+                        img => img.product_name === product.product_name
+                      ) || []
+                      
+                      if (productImages.length === 0) return null
+
+                      return (
+                        <div key={productIdx} className="mb-8">
+                          <h4 className="text-white font-medium mb-4 flex items-center gap-2">
+                            <Package className="w-4 h-4" />
+                            {product.product_name}
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {productImages.map((image, i) => (
+                              <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all">
+                                <div className={`relative group ${
+                                  selectedSize === 'instagram' ? 'aspect-[9/16]' : 
+                                  selectedSize === 'facebook' ? 'aspect-square' : 
+                                  'aspect-[16/9]'
+                                }`}>
+                                  <img
+                                    src={`data:image/jpeg;base64,${image.image_base64}`}
+                                    alt={`${image.product_name} - ${image.prompt_type}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                                  <div className="absolute bottom-2 left-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
+                                      Style {image.prompt_type?.replace('style_', '')}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="p-4">
+                                  <button
+                                    onClick={() => downloadImage(image)}
+                                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                    Download
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -399,6 +500,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               <p className="text-white/80">Create amazing content with AI</p>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push('/profile')}
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
+              >
+                <User className="w-4 h-4" />
+                Profile
+              </button>
               <button
                 onClick={() => router.push('/dashboard/history')}
                 className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
@@ -486,9 +594,17 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                     />
                   </div>
                   
-                  <p className="text-white/60 text-sm">
+                  <p className="text-white/60 text-sm mb-4">
                     This usually takes 30-60 seconds depending on the number of images
                   </p>
+                  
+                  <button
+                    onClick={cancelProcessing}
+                    className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-6 py-2 rounded-xl transition flex items-center gap-2 mx-auto"
+                  >
+                    <StopCircle className="w-4 h-4" />
+                    Cancel Processing
+                  </button>
                 </div>
               </div>
             </div>
@@ -505,7 +621,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             onDrop={handleDrop}
           >
             <Upload className="w-16 h-16 text-white/60 mx-auto mb-4" />
-            <p className="text-white text-lg mb-2">Drag & drop images here</p>
+            <p className="text-white text-lg mb-2">Drag & drop product images here</p>
             <p className="text-white/60 mb-4">or</p>
             <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-6 rounded-xl cursor-pointer transition-colors inline-block">
               Browse Files
@@ -518,7 +634,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               />
             </label>
             <p className="text-white/40 text-sm mt-4">
-              Supported formats: JPEG, PNG, WEBP (Max 10MB per file)
+              Upload product images only (no people/avatars) • JPEG, PNG, WEBP • Max 10MB
             </p>
           </div>
 
@@ -546,7 +662,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           {/* Options */}
           {files.length > 0 && (
             <>
-              {/* Image Size Selection */}
+              {/* Platform Selection */}
               <div className="mt-6 bg-white/5 rounded-xl p-6">
                 <h3 className="text-white font-medium mb-4 flex items-center gap-2">
                   <ImageIcon className="w-5 h-5" />
@@ -571,16 +687,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                         </div>
                         <p className="text-xs opacity-80 font-mono">{config.size}</p>
                         <p className="text-xs opacity-60">{config.description}</p>
-                        <div className="mt-2 flex items-center justify-between">
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            config.aspect === 'Vertical' ? 'bg-blue-500/30' :
-                            config.aspect === 'Square' ? 'bg-green-500/30' :
-                            'bg-purple-500/30'
-                          }`}>
-                            {config.aspect}
-                          </span>
-                          <span className="text-xs text-white/60">{config.credits} credit{config.credits > 1 ? 's' : ''}</span>
-                        </div>
                       </button>
                     )
                   })}
@@ -592,7 +698,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 <div>
                   <h3 className="text-white font-medium">AI Image Enhancement</h3>
                   <p className="text-white/60 text-sm">
-                    Create enhanced marketing images ({requiredCredits} credit{requiredCredits > 1 ? 's' : ''})
+                    Generate 3 creative styles per product ({requiredCredits} total credits)
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
@@ -606,54 +712,71 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 </label>
               </div>
 
-              {/* Credits Warning */}
-              {generateImages && creditsRemaining < requiredCredits && (
-                <div className="mt-4 bg-red-500/20 border border-red-500/40 rounded-lg p-4">
-                  <p className="text-red-200 text-sm">
-                    ⚠️ Not enough credits. You need {requiredCredits} credits but only have {creditsRemaining}.
-                    <a href="/pricing" className="underline ml-1">Upgrade your plan</a>
-                  </p>
-                </div>
-              )}
+              {/* Credits Info */}
+             <div className="mt-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+               <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+                 <Sparkles className="w-4 h-4" />
+                 Credits Information
+               </h4>
+               <ul className="text-white/80 text-sm space-y-1">
+                 <li>• Each product generates 3 unique marketing styles</li>
+                 <li>• {files.length} product{files.length !== 1 ? 's' : ''} × 3 styles = {requiredCredits} credits needed</li>
+                 <li>• You have {creditsRemaining} credits available</li>
+               </ul>
+             </div>
 
-              <button
-                onClick={processImages}
-                disabled={processing || (generateImages && creditsRemaining < requiredCredits)}
-                className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {processing ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    {generateImages ? <Wand2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                    Create {IMAGE_SIZES[selectedSize].label}
-                    {generateImages && ` (${requiredCredits} credit${requiredCredits > 1 ? 's' : ''})`}
-                  </>
-                )}
-              </button>
-            </>
-          )}
+             {/* Credits Warning */}
+             {generateImages && creditsRemaining < requiredCredits && (
+               <div className="mt-4 bg-red-500/20 border border-red-500/40 rounded-lg p-4">
+                 <p className="text-red-200 text-sm flex items-center gap-2">
+                   <AlertCircle className="w-4 h-4" />
+                   Not enough credits. You need {requiredCredits} credits but only have {creditsRemaining}.
+                   <a href="/pricing" className="underline ml-1">Get more credits</a>
+                 </p>
+               </div>
+             )}
 
-          {/* Product Scanner Notice */}
-          {files.length > 0 && (
-            <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
-              <h4 className="text-white font-medium mb-2 flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                How it works
-              </h4>
-              <ul className="text-white/80 text-sm space-y-1">
-                <li>• Upload product photos, avatars, or both</li>
-                <li>• AI scans and identifies your products automatically</li>
-                <li>• Get professionally enhanced marketing visuals</li>
-                <li>• Download and use on your chosen platform</li>
-              </ul>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
+             <button
+               onClick={processImages}
+               disabled={processing || (generateImages && creditsRemaining < requiredCredits)}
+               className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+             >
+               {processing ? (
+                 <>
+                   <Loader2 className="w-5 h-5 animate-spin" />
+                   Processing...
+                 </>
+               ) : (
+                 <>
+                   <Wand2 className="w-5 h-5" />
+                   Create Marketing Visuals
+                   {generateImages && ` (${requiredCredits} credits)`}
+                 </>
+               )}
+             </button>
+           </>
+         )}
+
+         {/* How It Works */}
+         {files.length > 0 && (
+           <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+             <h4 className="text-white font-medium mb-2 flex items-center gap-2">
+               <Sparkles className="w-4 h-4" />
+               How it works
+             </h4>
+             <ul className="text-white/80 text-sm space-y-1">
+               <li>• Upload clear product photos (no people or avatars)</li>
+               <li>• AI identifies and analyzes your products</li>
+               <li>• Get 3 unique marketing styles per product:</li>
+               <li className="ml-4">- Street-level giant product perspective</li>
+               <li className="ml-4">- 3D billboard advertisement style</li>
+               <li className="ml-4">- Premium editorial catalog layout</li>
+               <li>• Download and use on your chosen platform</li>
+             </ul>
+           </div>
+         )}
+       </div>
+     </div>
+   </div>
+ )
 }

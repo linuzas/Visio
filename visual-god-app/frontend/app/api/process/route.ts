@@ -1,4 +1,3 @@
-// File: visual-god-app/frontend/app/api/process/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
 
@@ -44,9 +43,7 @@ export async function POST(request: NextRequest) {
     const { images, generate_images, image_size, sessionId } = body
     
     // Updated credit calculation for product-only workflow (3 images per product)
-    const creditsPerProduct = image_size === 'youtube' ? 6 : 3 // 3 images per product, 2x for YouTube
-    const estimatedProducts = images.length // Assuming 1 product per uploaded image
-    const requiredCredits = generate_images ? (estimatedProducts * creditsPerProduct) : 0
+    const requiredCredits = generate_images ? (images.length * 3) : 0
     
     // Check user credits
     const { data: canProceed } = await supabase.rpc('check_user_credits', {

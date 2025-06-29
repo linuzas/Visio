@@ -70,6 +70,7 @@ class ProcessRequest(BaseModel):
     userId: Optional[str] = None
     generate_images: bool = True
     image_size: str = "instagram"  # New field for size selection
+    sessionId: Optional[str] = None
 
 class GenerateRequest(BaseModel):
     prompts: List[str]
@@ -89,7 +90,9 @@ class GeneratedImage(BaseModel):
     image_url: Optional[str] = None
     index: int
     input_image: Optional[str] = None
-    size: Optional[str] = None  # Track the size used
+    size: Optional[str] = None
+    product_name: Optional[str] = None
+    prompt_type: Optional[str] = None
 
 class ProcessResponse(BaseModel):
     success: bool
@@ -110,9 +113,9 @@ def read_root():
         "version": "2.0.0",
         "status": "running",
         "features": [
-            "Image classification",
+            "Product-only processing",
             "Product scanning", 
-            "AI prompt generation",
+            "AI prompt generation (3 styles per product)",
             "Multi-platform image generation",
             "Instagram Reels, Facebook Ads, YouTube Banners"
         ],
@@ -143,11 +146,12 @@ async def process_images(request: ProcessRequest):
         # Wrapper function with timeout handling
         async def safe_process():
             try:
-                return agent.process(
+                result = agent.process(
                     images_data, 
                     generate_images=request.generate_images,
-                    image_size=request.image_size  # Pass size to agent
+                    image_size=request.image_size
                 )
+                return result
             except Exception as e:
                 logger.error(f"Agent processing error: {e}")
                 return {
@@ -168,12 +172,17 @@ async def process_images(request: ProcessRequest):
             if result.get("generated_images"):
                 size_config = SIZE_CONFIGS[request.image_size]
                 for img in result["generated_images"]:
-                    img["size"] = size_config["size"]
+                    if "size" not in img or not img["size"]:
+                        img["size"] = size_config["size"]
             
             # Add processing metadata
             result["processing_timestamp"] = "2025-01-01T00:00:00Z"
             result["api_version"] = "2.0.0"
             result["image_format"] = SIZE_CONFIGS[request.image_size]["label"]
+            
+            # Add session ID if provided
+            if request.sessionId:
+                result["session_id"] = request.sessionId
             
             return result
             
@@ -250,7 +259,8 @@ async def generate_images_only(request: GenerateRequest):
             # Add size info to generated images
             size_config = SIZE_CONFIGS[request.image_size]
             for img in generated_images:
-                img["size"] = size_config["size"]
+                if "size" not in img or not img["size"]:
+                    img["size"] = size_config["size"]
             
         except asyncio.TimeoutError:
             return {
@@ -298,19 +308,21 @@ def get_pricing_info():
         "image_generation": {
             "model": "GPT-Image-1",
             "cost_per_image": "$0.08 USD",
+            "images_per_product": 3,
             "supported_sizes": list(SIZE_CONFIGS.keys()),
             "type": "Image editing/enhancement",
             "requires_input_image": True
         },
         "processing": {
-            "image_classification": "Included",
+            "product_validation": "Included",
             "product_scanning": "Included", 
-            "prompt_generation": "Included"
+            "prompt_generation": "3 unique styles per product"
         },
         "limits": {
-            "max_images_per_request": 1,
+            "max_products_per_request": 5,
             "max_file_size": "10MB",
-            "supported_formats": ["JPEG", "PNG", "WEBP"]
+            "supported_formats": ["JPEG", "PNG", "WEBP"],
+            "products_only": "No people or avatars allowed"
         }
     }
 
@@ -326,11 +338,11 @@ def health_check():
         "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
         "port": os.getenv("PORT", "8000"),
         "features": {
-            "image_processing": True,
+            "product_validation": True,
+            "product_scanning": True,
             "multi_platform_generation": True,
             "gpt_image_1_generation": bool(os.getenv("OPENAI_API_KEY")),
-            "product_scanning": True,
-            "avatar_classification": True
+            "three_styles_per_product": True
         },
         "supported_formats": list(SIZE_CONFIGS.keys())
     }
