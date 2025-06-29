@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, LogOut, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History } from 'lucide-react'
 
 interface GeneratedImage {
   prompt: string
@@ -87,6 +87,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [processingStep, setProcessingStep] = useState('')
   const [detectedProducts, setDetectedProducts] = useState<any[]>([])
   const [cancelRequested, setCancelRequested] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
   
   const router = useRouter()
   const supabase = createClient()
@@ -108,8 +109,12 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   // Cancel processing
   const cancelProcessing = () => {
     setCancelRequested(true)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
     setProcessing(false)
     setProcessingStep('Cancelled by user')
+    setUploadProgress(0)
   }
 
   const handleDrag = (e: React.DragEvent) => {
@@ -171,6 +176,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setCancelRequested(false)
     setDetectedProducts([])
     
+    // Create new abort controller
+    abortControllerRef.current = new AbortController()
+    
     // Start loading messages rotation
     const stopMessages = startLoadingMessages()
 
@@ -217,10 +225,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         .select()
         .single()
 
-      if (sessionError) throw sessionError
+      if (sessionError) {
+        console.error('Session error:', sessionError)
+        throw new Error('Failed to create session')
+      }
+      
       setUploadProgress(40)
 
-      // Store uploaded images
+      // Store uploaded images (without bucket dependency for now)
       for (const [index, img] of images.entries()) {
         await supabase.from('uploaded_images').insert({
           session_id: session.id,
@@ -231,7 +243,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         })
       }
 
-      // Call API
+      // Call API with abort signal
       setProcessingStep('Processing with AI...')
       const response = await fetch('/api/process', {
         method: 'POST',
@@ -245,6 +257,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           generate_images: generateImages,
           image_size: selectedSize
         }),
+        signal: abortControllerRef.current.signal
       })
 
       setUploadProgress(70)
@@ -254,6 +267,17 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       }
 
       const data = await response.json()
+      
+      // Handle validation errors specially
+      if (!data.success && data.error?.includes('No valid product images')) {
+        setProcessingStep('')
+        setResult({
+          success: false,
+          error: '❌ Please upload only product images. No people or avatars allowed.',
+          message: 'Only clear photos of physical products are accepted.'
+        })
+        return
+      }
       
       // Show detected products
       if (data.products) {
@@ -273,7 +297,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         })
         .eq('id', session.id)
 
-      // Save generated images to database
+      // Save generated images to database (without bucket upload for now)
       if (data.success && data.generated_images && session.id) {
         for (const [index, img] of data.generated_images.entries()) {
           await supabase.from('generated_images').insert({
@@ -321,15 +345,23 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       setResult(data)
       router.refresh() // Refresh to update credits
 
-    } catch (error) {
-      setResult({
-        success: false,
-        error: error instanceof Error ? error.message : 'Processing failed'
-      })
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        setResult({
+          success: false,
+          error: 'Processing cancelled by user'
+        })
+      } else {
+        setResult({
+          success: false,
+          error: error instanceof Error ? error.message : 'Processing failed'
+        })
+      }
     } finally {
       setProcessing(false)
       setProcessingStep('')
       stopMessages()
+      abortControllerRef.current = null
     }
   }
 
@@ -338,6 +370,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setResult(null)
     setUploadProgress(0)
     setDetectedProducts([])
+    setCancelRequested(false)
   }
 
   const handleLogout = async () => {
@@ -362,7 +395,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 </div>
                 <button
                   onClick={handleLogout}
-                  className="text-white/80 hover:text-white transition"
+                  className="text-white/80 hover:text-white transition duration-200"
                 >
                   <LogOut className="w-5 h-5" />
                 </button>
@@ -389,7 +422,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {result.products.map((product, i) => (
-                        <div key={i} className="bg-white/5 rounded-lg p-4">
+                        <div key={i} className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition duration-200">
                           <p className="text-white font-medium">{product.product_name}</p>
                           <p className="text-white/60 text-sm">Type: {product.product_type}</p>
                           {product.brand_name && (
@@ -428,7 +461,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                           </h4>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             {productImages.map((image, i) => (
-                              <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all">
+                              <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all duration-200 hover:shadow-xl">
                                 <div className={`relative group ${
                                   selectedSize === 'instagram' ? 'aspect-[9/16]' : 
                                   selectedSize === 'facebook' ? 'aspect-square' : 
@@ -439,8 +472,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                                     alt={`${image.product_name} - ${image.prompt_type}`}
                                     className="w-full h-full object-cover"
                                   />
-                                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                                  <div className="absolute bottom-2 left-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                  <div className="absolute bottom-2 left-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                     <span className="text-white text-xs bg-black/50 px-2 py-1 rounded">
                                       Style {image.prompt_type?.replace('style_', '')}
                                     </span>
@@ -449,7 +482,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                                 <div className="p-4">
                                   <button
                                     onClick={() => downloadImage(image)}
-                                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all flex items-center justify-center gap-2"
+                                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200 flex items-center justify-center gap-2 transform hover:scale-105"
                                   >
                                     <Download className="w-4 h-4" />
                                     Download
@@ -466,7 +499,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
                 <button
                   onClick={reset}
-                  className="w-full bg-white/20 hover:bg-white/30 text-white font-semibold py-3 rounded-xl transition-colors"
+                  className="w-full bg-white/20 hover:bg-white/30 text-white font-semibold py-3 rounded-xl transition-all duration-200 transform hover:scale-105"
                 >
                   Process New Images
                 </button>
@@ -474,10 +507,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             ) : (
               <div className="text-center">
                 <AlertCircle className="w-16 h-16 text-red-300 mx-auto mb-4" />
-                <p className="text-white text-lg mb-6">{result.error}</p>
+                <p className="text-white text-lg mb-2">{result.error}</p>
+                {result.message && (
+                  <p className="text-white/80 text-sm mb-6">{result.message}</p>
+                )}
                 <button
                   onClick={reset}
-                  className="bg-white/20 hover:bg-white/30 text-white font-semibold py-3 px-6 rounded-xl transition-colors"
+                  className="bg-white/20 hover:bg-white/30 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 transform hover:scale-105"
                 >
                   Try Again
                 </button>
@@ -499,31 +535,38 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               <h1 className="text-3xl font-bold text-white mb-1">Welcome back, {profile.full_name || profile.username || 'Creator'}!</h1>
               <p className="text-white/80">Create amazing content with AI</p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push('/')}
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+              >
+                <Home className="w-4 h-4" />
+                Home
+              </button>
               <button
                 onClick={() => router.push('/profile')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
               >
                 <User className="w-4 h-4" />
                 Profile
               </button>
               <button
                 onClick={() => router.push('/dashboard/history')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
               >
-                <Clock className="w-4 h-4" />
+                <History className="w-4 h-4" />
                 History
               </button>
               <button
                 onClick={() => router.push('/dashboard/stats')}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
               >
                 <BarChart3 className="w-4 h-4" />
                 Stats
               </button>
               <button
                 onClick={handleLogout}
-                className="text-white/80 hover:text-white transition"
+                className="text-white/80 hover:text-white transition-all duration-200 transform hover:scale-110"
               >
                 <LogOut className="w-5 h-5" />
               </button>
@@ -533,28 +576,28 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/60">Plan</span>
               <CreditCard className="w-5 h-5 text-white/40" />
             </div>
             <p className="text-2xl font-bold text-white capitalize">{profile.plan}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/60">Credits</span>
               <Sparkles className="w-5 h-5 text-white/40" />
             </div>
             <p className="text-2xl font-bold text-white">{creditsRemaining}/{profile.credits_total}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/60">Total Images</span>
               <ImageIcon className="w-5 h-5 text-white/40" />
             </div>
             <p className="text-2xl font-bold text-white">{stats?.total_images_generated || 0}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
               <span className="text-white/60">Sessions</span>
               <Wand2 className="w-5 h-5 text-white/40" />
@@ -600,7 +643,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                   
                   <button
                     onClick={cancelProcessing}
-                    className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-6 py-2 rounded-xl transition flex items-center gap-2 mx-auto"
+                    className="bg-red-500/20 hover:bg-red-500/30 text-red-300 px-6 py-2 rounded-xl transition-all duration-200 flex items-center gap-2 mx-auto transform hover:scale-105"
                   >
                     <StopCircle className="w-4 h-4" />
                     Cancel Processing
@@ -612,8 +655,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
           {/* Upload Area */}
           <div
-            className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all ${
-              dragActive ? 'border-white bg-white/10' : 'border-white/30 hover:border-white/50'
+            className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all duration-200 ${
+              dragActive ? 'border-white bg-white/10 scale-105' : 'border-white/30 hover:border-white/50'
             }`}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -623,7 +666,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             <Upload className="w-16 h-16 text-white/60 mx-auto mb-4" />
             <p className="text-white text-lg mb-2">Drag & drop product images here</p>
             <p className="text-white/60 mb-4">or</p>
-            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-6 rounded-xl cursor-pointer transition-colors inline-block">
+            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
               Browse Files
               <input
                 type="file"
@@ -642,7 +685,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           {files.length > 0 && (
             <div className="mt-6 space-y-2">
               {files.map((file, i) => (
-                <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between group hover:bg-white/15 transition">
+                <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between group hover:bg-white/15 transition-all duration-200">
                   <div className="flex items-center gap-3 flex-1">
                     <ImageIcon className="w-5 h-5 text-white/60" />
                     <span className="text-white text-sm truncate flex-1">{file.name}</span>
@@ -650,7 +693,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                   </div>
                   <button
                     onClick={() => removeFile(i)}
-                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition"
+                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition-all duration-200 transform hover:scale-110"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -675,9 +718,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                       <button
                         key={key}
                         onClick={() => setSelectedSize(key as keyof typeof IMAGE_SIZES)}
-                        className={`p-4 rounded-lg border-2 transition-all text-left ${
+                        className={`p-4 rounded-lg border-2 transition-all duration-200 text-left transform hover:scale-105 ${
                           selectedSize === key
-                            ? 'border-white bg-white/10 text-white'
+                            ? 'border-white bg-white/10 text-white scale-105'
                             : 'border-white/30 hover:border-white/50 text-white/80 hover:text-white'
                         }`}
                       >
@@ -694,7 +737,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               </div>
 
               {/* Generate Images Toggle */}
-              <div className="mt-6 flex items-center justify-between bg-white/5 rounded-xl p-4">
+              <div className="mt-6 flex items-center justify-between bg-white/5 rounded-xl p-4 hover:bg-white/10 transition-all duration-200">
                 <div>
                   <h3 className="text-white font-medium">AI Image Enhancement</h3>
                   <p className="text-white/60 text-sm">
@@ -731,7 +774,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                  <p className="text-red-200 text-sm flex items-center gap-2">
                    <AlertCircle className="w-4 h-4" />
                    Not enough credits. You need {requiredCredits} credits but only have {creditsRemaining}.
-                   <a href="/pricing" className="underline ml-1">Get more credits</a>
+                   <a href="/pricing" className="underline ml-1 hover:text-red-100">Get more credits</a>
                  </p>
                </div>
              )}
@@ -739,7 +782,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
              <button
                onClick={processImages}
                disabled={processing || (generateImages && creditsRemaining < requiredCredits)}
-               className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+               className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:hover:scale-100"
              >
                {processing ? (
                  <>
@@ -758,7 +801,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
          )}
 
          {/* How It Works */}
-         {files.length > 0 && (
+         {files.length === 0 && (
            <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
              <h4 className="text-white font-medium mb-2 flex items-center gap-2">
                <Sparkles className="w-4 h-4" />
