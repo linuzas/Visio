@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/middleware.ts
+// REPLACE your existing middleware.ts with this fixed version
+
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
@@ -52,6 +55,13 @@ export async function middleware(request: NextRequest) {
   // Check if the current path is an auth route
   const isAuthRoute = authRoutes.some(route => pathname === route)
 
+  // FIXED: Don't redirect authenticated users away from homepage
+  // Allow authenticated users to access the homepage
+  if (pathname === '/' && user) {
+    // Let them stay on homepage, don't force redirect to dashboard
+    return supabaseResponse
+  }
+
   // Protected route logic
   if (!isPublicRoute && !user) {
     // User is not authenticated and trying to access a protected route
@@ -63,11 +73,6 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && user) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  // Redirect authenticated users from home to dashboard
-  if (pathname === '/' && user) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

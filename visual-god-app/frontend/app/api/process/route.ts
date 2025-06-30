@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/app/api/process/route.ts
+// UPDATE your existing process route with better error handling
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
 
@@ -58,26 +61,84 @@ export async function POST(request: NextRequest) {
       }, { status: 403 })
     }
     
-    // Call your Railway backend
-    const response = await fetch(`${BACKEND_URL}/api/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        images,
-        userId: user.id,
-        sessionId,
-        generate_images,
-        image_size
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Backend error: ${response.status}`)
+    // Call your Railway backend with better error handling
+    let response: Response
+    
+    try {
+      response = await fetch(`${BACKEND_URL}/api/process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          images,
+          userId: user.id,
+          sessionId,
+          generate_images,
+          image_size
+        }),
+        // Add timeout and retry logic
+        signal: AbortSignal.timeout(300000), // 5 minutes timeout
+      })
+    } catch (fetchError: any) {
+      console.error('Backend fetch error:', fetchError)
+      
+      // Handle specific fetch errors
+      if (fetchError.name === 'AbortError' || fetchError.message.includes('timeout')) {
+        return NextResponse.json({
+          success: false,
+          error: 'Request timed out. The backend is taking longer than expected. Please try with fewer images or try again later.'
+        }, { status: 408 })
+      }
+      
+      if (fetchError.message.includes('ECONNREFUSED') || fetchError.message.includes('network')) {
+        return NextResponse.json({
+          success: false,
+          error: 'Unable to connect to the AI processing service. Please try again in a few moments.'
+        }, { status: 503 })
+      }
+      
+      return NextResponse.json({
+        success: false,
+        error: 'Network error occurred. Please check your connection and try again.'
+      }, { status: 503 })
     }
 
-    const data: BackendResponse = await response.json()
+    // Handle HTTP errors
+    if (!response.ok) {
+      let errorMessage = 'Processing failed'
+      
+      if (response.status === 413) {
+        errorMessage = 'Images are too large. Please use smaller images (under 4MB each).'
+      } else if (response.status === 429) {
+        errorMessage = 'Too many requests. Please wait a moment and try again.'
+      } else if (response.status === 500) {
+        errorMessage = 'Server error occurred. This might be due to high traffic. Please try again in a few moments.'
+      } else if (response.status === 502 || response.status === 503) {
+        errorMessage = 'Service temporarily unavailable. Please try again in a few moments.'
+      } else if (response.status === 504) {
+        errorMessage = 'Request timed out. Please try with fewer images or try again later.'
+      } else {
+        errorMessage = `Processing error (${response.status}). Please try again.`
+      }
+      
+      return NextResponse.json({
+        success: false,
+        error: errorMessage
+      }, { status: response.status })
+    }
+
+    let data: BackendResponse
+    
+    try {
+      data = await response.json()
+    } catch (parseError) {
+      console.error('Response parsing error:', parseError)
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid response from processing service. Please try again.'
+      }, { status: 502 })
+    }
     
     // Save generated images to Supabase Storage and database if successful
     if (data.success && data.generated_images && sessionId) {
@@ -183,9 +244,29 @@ export async function POST(request: NextRequest) {
     
   } catch (error) {
     console.error('Processing error:', error)
+    
+    // Handle different types of errors
+    let errorMessage = 'Processing failed'
+    let statusCode = 500
+    
+    if (error instanceof Error) {
+      if (error.message.includes('timeout')) {
+        errorMessage = 'Request timed out. Please try with fewer images or try again later.'
+        statusCode = 408
+      } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        errorMessage = 'Network error. Please check your connection and try again.'
+        statusCode = 503
+      } else if (error.message.includes('credits')) {
+        errorMessage = 'Insufficient credits for this operation.'
+        statusCode = 403
+      } else {
+        errorMessage = `Processing failed: ${error.message}`
+      }
+    }
+    
     return NextResponse.json({
       success: false,
-      error: error instanceof Error ? error.message : 'Processing failed'
-    }, { status: 500 })
+      error: errorMessage
+    }, { status: statusCode })
   }
 }

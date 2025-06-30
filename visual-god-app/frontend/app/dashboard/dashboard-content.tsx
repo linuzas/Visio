@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/app/dashboard/dashboard-content.tsx
+// REPLACE your existing dashboard-content.tsx with this fixed version
+
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
@@ -119,37 +122,37 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
   // Navigation component
   const Navigation = () => (
-    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 mb-8 shadow-2xl">
-      <div className="flex items-center justify-between">
+    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-1">Welcome back, {profile.full_name || profile.username || 'Creator'}!</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">Welcome back, {profile.full_name || profile.username || 'Creator'}!</h1>
           <p className="text-white/80">Create amazing content with AI</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => router.push('/')}
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
           >
             <Home className="w-4 h-4" />
             Home
           </button>
           <button
             onClick={() => router.push('/profile')}
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
           >
             <User className="w-4 h-4" />
             Profile
           </button>
           <button
             onClick={() => router.push('/dashboard/history')}
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
           >
             <History className="w-4 h-4" />
             History
           </button>
           <button
             onClick={() => router.push('/dashboard/stats')}
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
           >
             <BarChart3 className="w-4 h-4" />
             Stats
@@ -199,11 +202,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
       file => file.type.startsWith('image/')
     )
-    setFiles(prev => [...prev, ...droppedFiles])
+    
+    const newFiles = [...files, ...droppedFiles]
+    setFiles(newFiles)
     
     // Auto-validate new files
-    if (droppedFiles.length > 0) {
-      validateImages([...files, ...droppedFiles])
+    if (newFiles.length > 0) {
+      validateImages(newFiles)
     }
   }
 
@@ -212,11 +217,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       const selectedFiles = Array.from(e.target.files).filter(
         file => file.type.startsWith('image/')
       )
-      setFiles(prev => [...prev, ...selectedFiles])
+      
+      const newFiles = [...files, ...selectedFiles]
+      setFiles(newFiles)
       
       // Auto-validate new files
-      if (selectedFiles.length > 0) {
-        validateImages([...files, ...selectedFiles])
+      if (newFiles.length > 0) {
+        validateImages(newFiles)
       }
     }
   }
@@ -225,10 +232,11 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     const newFiles = files.filter((_, i) => i !== index)
     setFiles(newFiles)
     
-    // Re-validate remaining files
+    // Re-validate remaining files and update validation results
     if (newFiles.length > 0) {
       validateImages(newFiles)
     } else {
+      // FIXED: Clear validation when no files remain
       setValidationResults([])
       setCanProceed(false)
       setShowValidation(false)
@@ -237,7 +245,12 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
   // NEW: Validate images function
   const validateImages = async (filesToValidate: File[] = files) => {
-    if (filesToValidate.length === 0) return
+    if (filesToValidate.length === 0) {
+      setValidationResults([])
+      setCanProceed(false)
+      setShowValidation(false)
+      return
+    }
 
     setValidating(true)
     setShowValidation(true)
@@ -404,7 +417,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         if (response.status === 413) {
           throw new Error('Image files are too large. Please use smaller images (under 4MB each).')
         }
-        throw new Error(`API Error: ${response.status}`)
+        if (response.status === 500) {
+          throw new Error('Server error occurred. This might be due to high traffic or temporary issues. Please try again in a few moments.')
+        }
+        throw new Error(`API Error: ${response.status} - ${response.statusText}`)
       }
 
       const data = await response.json()
@@ -478,10 +494,22 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       if (error.name === 'AbortError' || cancelRequested) {
         // Handle cancellation silently - don't show error
         return
-      } else {
+              } else {
+        let errorMessage = 'Processing failed'
+        
+        if (error.message.includes('fetch')) {
+          errorMessage = 'Network error. Please check your connection and try again.'
+        } else if (error.message.includes('timeout')) {
+          errorMessage = 'Request timed out. Please try with fewer images or try again later.'
+        } else if (error.message.includes('500')) {
+          errorMessage = 'Server error occurred. Please try again in a few moments.'
+        } else {
+          errorMessage = error.message || 'An unexpected error occurred'
+        }
+        
         setResult({
           success: false,
-          error: error instanceof Error ? error.message : 'Processing failed'
+          error: errorMessage
         })
       }
     } finally {
@@ -597,14 +625,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
   if (result) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
         <div className="max-w-6xl mx-auto">
           <Navigation />
           
-          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
-            <div className="flex items-center justify-between mb-8">
-              <h1 className="text-4xl font-bold text-white flex items-center gap-3">
-                <Sparkles className="w-10 h-10" />
+          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+              <h1 className="text-3xl md:text-4xl font-bold text-white flex items-center gap-3">
+                <Sparkles className="w-8 h-8 md:w-10 md:h-10" />
                 Visual God Results
               </h1>
               <div className="flex items-center gap-4">
@@ -650,8 +678,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 {/* Generated Images */}
                 {result.generated_images && result.generated_images.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
-                    <h2 className="text-2xl font-semibold text-white mb-6 flex items-center gap-3">
-                      <Wand2 className="w-8 h-8" />
+                    <h2 className="text-xl md:text-2xl font-semibold text-white mb-6 flex items-center gap-3">
+                      <Wand2 className="w-6 h-6 md:w-8 md:h-8" />
                       AI-Enhanced Images ({result.generated_images.length})
                       <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
                         {IMAGE_SIZES[selectedSize].size}
@@ -672,7 +700,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                             <Package className="w-4 h-4" />
                             {product.product_name}
                           </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                             {productImages.map((image, i) => (
                               <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all duration-200 hover:shadow-xl">
                                 <div className={`relative group ${
@@ -739,45 +767,45 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         <Navigation />
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60">Plan</span>
-              <CreditCard className="w-5 h-5 text-white/40" />
+              <span className="text-white/60 text-xs md:text-sm">Plan</span>
+              <CreditCard className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
             </div>
-            <p className="text-2xl font-bold text-white capitalize">{profile.plan}</p>
+            <p className="text-lg md:text-2xl font-bold text-white capitalize">{profile.plan}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60">Credits</span>
-              <Sparkles className="w-5 h-5 text-white/40" />
+              <span className="text-white/60 text-xs md:text-sm">Credits</span>
+              <Sparkles className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
             </div>
-            <p className="text-2xl font-bold text-white">{creditsRemaining}/{profile.credits_total}</p>
+            <p className="text-lg md:text-2xl font-bold text-white">{creditsRemaining}/{profile.credits_total}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60">Total Images</span>
-              <ImageIcon className="w-5 h-5 text-white/40" />
+              <span className="text-white/60 text-xs md:text-sm">Total Images</span>
+              <ImageIcon className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
             </div>
-            <p className="text-2xl font-bold text-white">{stats?.total_images_generated || 0}</p>
+            <p className="text-lg md:text-2xl font-bold text-white">{stats?.total_images_generated || 0}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60">Sessions</span>
-              <Wand2 className="w-5 h-5 text-white/40" />
+              <span className="text-white/60 text-xs md:text-sm">Sessions</span>
+              <Wand2 className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
             </div>
-            <p className="text-2xl font-bold text-white">{stats?.total_sessions || 0}</p>
+            <p className="text-lg md:text-2xl font-bold text-white">{stats?.total_sessions || 0}</p>
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
-          <h2 className="text-2xl font-bold text-white mb-6 text-center">Create New Content</h2>
+        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
+          <h2 className="text-xl md:text-2xl font-bold text-white mb-6 text-center">Create New Content</h2>
 
           {/* Processing Overlay */}
           {processing && (
@@ -824,7 +852,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
           {/* Upload Area */}
           <div
-            className={`border-2 border-dashed rounded-2xl p-8 text-center transition-all duration-200 ${
+            className={`border-2 border-dashed rounded-2xl p-6 md:p-8 text-center transition-all duration-200 ${
               dragActive ? 'border-white bg-white/10 scale-105' : 'border-white/30 hover:border-white/50'
             }`}
             onDragEnter={handleDrag}
@@ -832,10 +860,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             onDragOver={handleDrag}
             onDrop={handleDrop}
           >
-            <Upload className="w-16 h-16 text-white/60 mx-auto mb-4" />
-            <p className="text-white text-lg mb-2">Drag & drop product images here</p>
+            <Upload className="w-12 h-12 md:w-16 md:h-16 text-white/60 mx-auto mb-4" />
+            <p className="text-white text-base md:text-lg mb-2">Drag & drop product images here</p>
             <p className="text-white/60 mb-4">or</p>
-            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
+            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-4 md:px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
               Browse Files
               <input
                 type="file"
@@ -845,7 +873,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 className="hidden"
               />
             </label>
-            <p className="text-white/40 text-sm mt-4">
+            <p className="text-white/40 text-xs md:text-sm mt-4">
               Upload product images only (no people/avatars) • JPEG, PNG, WEBP • Max 4MB each
             </p>
           </div>
@@ -855,14 +883,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             <div className="mt-6 space-y-2">
               {files.map((file, i) => (
                 <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between group hover:bg-white/15 transition-all duration-200">
-                  <div className="flex items-center gap-3 flex-1">
-                    <ImageIcon className="w-5 h-5 text-white/60" />
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <ImageIcon className="w-5 h-5 text-white/60 flex-shrink-0" />
                     <span className="text-white text-sm truncate flex-1">{file.name}</span>
-                    <span className="text-white/40 text-xs">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                    <span className="text-white/40 text-xs flex-shrink-0">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
                   </div>
                   <button
                     onClick={() => removeFile(i)}
-                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition-all duration-200 transform hover:scale-110"
+                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition-all duration-200 transform hover:scale-110 flex-shrink-0"
                   >
                     <X className="w-4 h-4" />
                   </button>
