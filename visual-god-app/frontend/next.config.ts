@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/next.config.ts
-// OPTIMIZED VERSION - Better performance and caching
+// FIXED VERSION - Removed deprecated options for Next.js 15
 
 import type { NextConfig } from "next";
 
@@ -83,13 +83,10 @@ const nextConfig: NextConfig = {
     ];
   },
   
-  // Optimize bundle size
+  // Optimize bundle size - removed deprecated swcMinify
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
   },
-  
-  // Performance optimizations
-  swcMinify: true,
   
   // Redirect optimization
   async redirects() {

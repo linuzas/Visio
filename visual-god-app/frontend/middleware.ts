@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/middleware.ts
-// OPTIMIZED VERSION - Better performance, cleaner auth flow, proper error handling
+// FIXED VERSION - Vercel build compatible middleware
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
@@ -129,14 +129,13 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except:
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico, robots.txt, sitemap.xml, etc.
-     * - public files with extensions (images, etc.)
-     * But include:
-     * - All pages and API routes (excluding most /api/ routes for performance)
+     * - favicon.ico (favicon file)
+     * Feel free to modify this pattern to include more paths.
      */
-    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(png|jpg|jpeg|gif|webp|svg|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 }
