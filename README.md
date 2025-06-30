@@ -2,7 +2,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3.3-black)](https://nextjs.org/) [![React](https://img.shields.io/badge/React-19.0.0-blue)](https://reactjs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.8.3-blue)](https://www.typescriptlang.org/) [![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS-4.1.9-06B6D4)](https://tailwindcss.com/) [![Supabase](https://img.shields.io/badge/Supabase-2.50.2-3ECF8E)](https://supabase.com/) [![Railway](https://img.shields.io/badge/Railway-Backend-0B0D0E)](https://railway.app/) [![Vercel](https://img.shields.io/badge/Vercel-Frontend-black)](https://vercel.com/)
 
-## 🚀 [Live Demo](https://visual-god-app.vercel.app)
+## 🚀 [Live Demo](https://visio-six.vercel.app/)
 
 **Visual God** is an AI-powered platform that transforms ordinary product images into stunning marketing visuals optimized for Instagram Reels, Facebook Ads, and YouTube Banners. Built with modern web technologies and powered by OpenAI's GPT-Image-1 model, it offers a complete product-only workflow with AI validation, automatic content generation, and multi-platform optimization.
 
