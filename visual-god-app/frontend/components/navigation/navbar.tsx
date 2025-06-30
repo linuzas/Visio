@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/components/navigation/navbar.tsx
-// REPLACE your existing navbar.tsx with this fixed version
+// FIXED VERSION - Better auth state handling and cleaner navigation
 
 'use client'
 
@@ -20,7 +20,6 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/', label: 'Home', icon: Home },
   { href: '/dashboard', label: 'Dashboard', icon: Sparkles, requiresAuth: true },
   { href: '/dashboard/history', label: 'History', icon: History, requiresAuth: true },
   { href: '/dashboard/stats', label: 'Stats', icon: BarChart3, requiresAuth: true },
@@ -48,9 +47,15 @@ export function Navbar({
   subtitle 
 }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(!!user)
   const router = useRouter()
   const pathname = usePathname()
   const supabase = createClient()
+
+  // Check auth state on mount and updates
+  useEffect(() => {
+    setIsLoggedIn(!!user)
+  }, [user])
 
   // Close mobile menu when route changes
   useEffect(() => {
@@ -73,19 +78,22 @@ export function Navbar({
     try {
       await supabase.auth.signOut()
       setMobileMenuOpen(false)
+      setIsLoggedIn(false)
       router.push('/')
+      router.refresh()
     } catch (error) {
       console.error('Logout error:', error)
     }
   }
 
   const isActive = (href: string) => {
-    if (href === '/') return pathname === '/'
+    if (href === '/dashboard') return pathname === '/dashboard'
     return pathname.startsWith(href)
   }
 
+  // Filter nav items based on auth state
   const filteredNavItems = NAV_ITEMS.filter(item => 
-    !item.requiresAuth || (item.requiresAuth && user)
+    !item.requiresAuth || (item.requiresAuth && isLoggedIn)
   )
 
   const handleMobileNavClick = (href: string) => {
@@ -104,7 +112,7 @@ export function Navbar({
           {/* Left: Logo + Back Button or Title */}
           <div className="flex items-center gap-2 md:gap-4 flex-1 min-w-0">
             <Link 
-              href="/" 
+              href={isLoggedIn ? "/dashboard" : "/"} 
               className="flex items-center gap-2 hover:scale-105 transition-transform flex-shrink-0"
               onClick={() => setMobileMenuOpen(false)}
             >
@@ -156,7 +164,8 @@ export function Navbar({
               )
             })}
             
-            {user && (
+            {/* Auth buttons */}
+            {isLoggedIn ? (
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
@@ -164,9 +173,7 @@ export function Navbar({
                 <LogOut className="w-4 h-4" />
                 Sign Out
               </button>
-            )}
-            
-            {!user && (
+            ) : (
               <div className="flex items-center gap-2">
                 <Link
                   href="/auth/login"
@@ -243,7 +250,8 @@ export function Navbar({
               )
             })}
             
-            {user && (
+            {/* Mobile Auth Buttons */}
+            {isLoggedIn ? (
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-3 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-4 py-3 rounded-xl transition-all duration-200"
@@ -251,9 +259,7 @@ export function Navbar({
                 <LogOut className="w-5 h-5" />
                 Sign Out
               </button>
-            )}
-            
-            {!user && (
+            ) : (
               <div className="pt-4 border-t border-white/20 space-y-2">
                 <button
                   onClick={() => handleMobileNavClick('/auth/login')}
@@ -276,7 +282,7 @@ export function Navbar({
   )
 }
 
-// Specialized navigation components
+// Specialized navigation components for different pages
 export function DashboardNavbar({ profile, stats }: { profile: any, stats: any }) {
   return (
     <Navbar

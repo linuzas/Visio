@@ -1,4 +1,5 @@
 // File: visual-god-app/frontend/components/profile/profile-content.tsx
+// FIXED VERSION - Clean profile without navigation conflicts
 
 'use client'
 
@@ -8,9 +9,8 @@ import { createClient } from '@/lib/supabase/client'
 import { 
   User, Mail, CreditCard, Camera, Save, 
   Loader2, CheckCircle, AlertCircle, Shield, Calendar,
-  BarChart3
+  BarChart3, Sparkles, ArrowLeft
 } from 'lucide-react'
-import { PageNavbar } from '@/components/navigation/navbar'
 import Link from 'next/link'
 
 interface ProfileContentProps {
@@ -105,15 +105,35 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
-        <PageNavbar 
-          user={user}
-          title="My Profile"
-          subtitle="Manage your account settings and preferences"
-        />
+        {/* Simple Header Navigation */}
+        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
+              </Link>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold text-white">My Profile</h1>
+                <p className="text-white/60 text-sm">Manage your account settings</p>
+              </div>
+            </div>
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 text-white hover:text-white/80 transition"
+            >
+              <Sparkles className="w-6 h-6" />
+              <span className="hidden sm:inline">Visual God</span>
+            </Link>
+          </div>
+        </div>
         
-        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
+        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
           {/* Message */}
           {message && (
             <div className={`mb-6 p-4 rounded-lg flex items-center gap-3 ${
@@ -313,22 +333,37 @@ export function ProfileContent({ profile, stats, user }: ProfileContentProps) {
                 </div>
               </div>
 
-              {/* Security Settings */}
+              {/* Quick Actions */}
               <div className="bg-white/10 rounded-xl p-6 hover:bg-white/15 transition">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                  <Shield className="w-5 h-5" />
-                  Security
+                  <Sparkles className="w-5 h-5" />
+                  Quick Actions
                 </h3>
-                <div className="space-y-3">
-                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4 transform hover:scale-105">
-                    Change Password
-                  </button>
-                  <button className="w-full bg-white/20 hover:bg-white/30 text-white py-2 rounded-lg transition text-left px-4 transform hover:scale-105">
-                    Two-Factor Authentication
-                  </button>
-                  <button className="w-full bg-red-500/20 hover:bg-red-500/30 text-red-200 py-2 rounded-lg transition text-left px-4 border border-red-500/40 transform hover:scale-105">
-                    Delete Account
-                  </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Link
+                    href="/dashboard"
+                    className="bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-lg transition text-center transform hover:scale-105"
+                  >
+                    Create Content
+                  </Link>
+                  <Link
+                    href="/dashboard/history"
+                    className="bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-lg transition text-center transform hover:scale-105"
+                  >
+                    View History
+                  </Link>
+                  <Link
+                    href="/dashboard/stats"
+                    className="bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-lg transition text-center transform hover:scale-105"
+                  >
+                    View Stats
+                  </Link>
+                  <Link
+                    href="/pricing"
+                    className="bg-white/20 hover:bg-white/30 text-white py-3 px-4 rounded-lg transition text-center transform hover:scale-105"
+                  >
+                    Upgrade Plan
+                  </Link>
                 </div>
               </div>
             </div>

@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/middleware.ts
-// REPLACE your existing middleware.ts with this fixed version
+// FIXED VERSION - Faster, cleaner middleware with better routing
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
@@ -27,13 +27,10 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // This will refresh the session if expired - required for Server Components
-  const { data: { user } } = await supabase.auth.getUser()
-
-  // Get the pathname of the request
+  // Get the pathname
   const pathname = request.nextUrl.pathname
 
-  // Define public routes that don't require authentication
+  // Define route types
   const publicRoutes = [
     '/',
     '/auth/login',
@@ -46,36 +43,46 @@ export async function middleware(request: NextRequest) {
     '/contact'
   ]
 
-  // Define auth routes (login/register pages)
   const authRoutes = ['/auth/login', '/auth/register']
+  const protectedRoutes = ['/dashboard', '/profile']
 
-  // Check if the current path is a public route
-  const isPublicRoute = publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'))
-  
-  // Check if the current path is an auth route
-  const isAuthRoute = authRoutes.some(route => pathname === route)
-
-  // FIXED: Don't redirect authenticated users away from homepage
-  // Allow authenticated users to access the homepage
-  if (pathname === '/' && user) {
-    // Let them stay on homepage, don't force redirect to dashboard
+  // Skip auth check for static files and API routes
+  if (
+    pathname.startsWith('/_next/') ||
+    pathname.startsWith('/api/') ||
+    pathname.includes('.') ||
+    pathname.startsWith('/favicon')
+  ) {
     return supabaseResponse
   }
 
-  // Protected route logic
-  if (!isPublicRoute && !user) {
-    // User is not authenticated and trying to access a protected route
+  // Check if route is public
+  const isPublicRoute = publicRoutes.includes(pathname)
+  const isAuthRoute = authRoutes.includes(pathname)
+  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route))
+
+  // Only check auth for protected routes to improve performance
+  let user = null
+  if (isProtectedRoute || isAuthRoute) {
+    const { data: { user: authUser } } = await supabase.auth.getUser()
+    user = authUser
+  }
+
+  // Redirect logic
+  if (isProtectedRoute && !user) {
+    // Redirect to login if trying to access protected route without auth
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/auth/login'
     redirectUrl.searchParams.set('redirectedFrom', pathname)
     return NextResponse.redirect(redirectUrl)
   }
 
-  // Redirect authenticated users away from auth pages
   if (isAuthRoute && user) {
+    // Redirect authenticated users away from auth pages
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
+  // Allow all other routes (including homepage for both auth and non-auth users)
   return supabaseResponse
 }
 
@@ -86,8 +93,7 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
-     * - public folder
-     * - public files with extensions (images, fonts, etc.)
+     * - public files with extensions
      */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],

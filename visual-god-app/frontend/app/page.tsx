@@ -1,10 +1,9 @@
 // File: visual-god-app/frontend/app/page.tsx
-// REPLACE your existing page.tsx with this
+// FIXED VERSION - No navigation, clean landing page
 
 import Link from 'next/link'
 import { ArrowRight, Sparkles, Zap, Shield, CreditCard, Instagram, Facebook, MonitorPlay, CheckCircle } from 'lucide-react'
 import { createServerClient } from '@/lib/supabase/server'
-import { Navbar } from '@/components/navigation/navbar'
 
 const features = [
   {
@@ -82,113 +81,157 @@ const pricingPlans = [
   }
 ]
 
+// Simple landing page navbar - NO complex navigation
+function LandingNavbar({ user }: { user?: any }) {
+  return (
+    <nav className="absolute top-0 left-0 right-0 z-50 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto flex items-center justify-between">
+        {/* Logo */}
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-6 h-6 md:w-8 md:h-8 text-white" />
+          <span className="text-lg md:text-2xl font-bold text-white">Visual God</span>
+        </div>
+
+        {/* Simple auth buttons */}
+        <div className="flex items-center gap-2 md:gap-4">
+          {user ? (
+            <Link
+              href="/dashboard"
+              className="bg-white/20 hover:bg-white/30 backdrop-blur text-white px-4 md:px-6 py-2 md:py-3 rounded-xl font-medium transition transform hover:scale-105 text-sm md:text-base"
+            >
+              Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/auth/login"
+                className="text-white/80 hover:text-white px-3 md:px-4 py-2 transition text-sm md:text-base"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/auth/register"
+                className="bg-white/20 hover:bg-white/30 backdrop-blur text-white px-4 md:px-6 py-2 md:py-3 rounded-xl font-medium transition transform hover:scale-105 text-sm md:text-base"
+              >
+                Get Started
+              </Link>
+            </>
+          )}
+        </div>
+      </div>
+    </nav>
+  )
+}
+
 export default async function LandingPage() {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400">
-      <div className="max-w-7xl mx-auto p-8">
-        <Navbar user={user} />
-        
+      <LandingNavbar user={user} />
+      
+      <div className="max-w-7xl mx-auto p-4 md:p-8">
         {/* Hero Section */}
-        <section className="py-20 text-center">
-          <h1 className="text-5xl md:text-6xl font-bold text-white mb-6 leading-tight">
+        <section className="pt-20 md:pt-32 pb-12 md:pb-20 text-center">
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
             Transform Your Products Into<br />
             <span className="bg-gradient-to-r from-yellow-200 to-pink-200 text-transparent bg-clip-text">
               Stunning Marketing Visuals
             </span>
           </h1>
-          <p className="text-xl text-white/80 mb-8 max-w-2xl mx-auto">
+          <p className="text-lg md:text-xl text-white/80 mb-8 max-w-2xl mx-auto">
             Upload your product images and let AI create professional marketing content for Instagram, Facebook, and YouTube in seconds.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
               href={user ? "/dashboard" : "/auth/register"}
-              className="bg-white text-purple-600 hover:bg-white/90 px-8 py-4 rounded-xl font-semibold text-lg transition flex items-center justify-center gap-2 shadow-lg transform hover:scale-105"
+              className="bg-white text-purple-600 hover:bg-white/90 px-6 md:px-8 py-3 md:py-4 rounded-xl font-semibold text-lg transition flex items-center justify-center gap-2 shadow-lg transform hover:scale-105"
             >
               {user ? "Go to Dashboard" : "Start Creating Free"}
               <ArrowRight className="w-5 h-5" />
             </Link>
             <Link
               href="#demo"
-              className="bg-white/20 backdrop-blur hover:bg-white/30 text-white px-8 py-4 rounded-xl font-semibold text-lg transition transform hover:scale-105"
+              className="bg-white/20 backdrop-blur hover:bg-white/30 text-white px-6 md:px-8 py-3 md:py-4 rounded-xl font-semibold text-lg transition transform hover:scale-105"
             >
               Watch Demo
             </Link>
           </div>
-          <p className="text-white/60 mt-4">No credit card required • 10 free credits • AI validation included</p>
+          <p className="text-white/60 mt-4 text-sm md:text-base">No credit card required • 10 free credits • AI validation included</p>
         </section>
 
         {/* Features Grid */}
-        <section className="py-20" id="features">
-          <h2 className="text-3xl md:text-4xl font-bold text-white text-center mb-12">
+        <section className="py-12 md:py-20" id="features">
+          <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white text-center mb-8 md:mb-12">
             Everything You Need to Create Amazing Content
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
             {features.map((feature, index) => (
               <div
                 key={index}
                 className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105"
               >
-                <feature.icon className="w-12 h-12 text-white mb-4" />
-                <h3 className="text-xl font-semibold text-white mb-2">{feature.title}</h3>
-                <p className="text-white/70">{feature.description}</p>
+                <feature.icon className="w-10 h-10 md:w-12 md:h-12 text-white mb-4" />
+                <h3 className="text-lg md:text-xl font-semibold text-white mb-2">{feature.title}</h3>
+                <p className="text-white/70 text-sm md:text-base">{feature.description}</p>
               </div>
             ))}
           </div>
         </section>
 
         {/* How It Works */}
-        <section className="py-20" id="how-it-works">
-          <h2 className="text-3xl md:text-4xl font-bold text-white text-center mb-12">
+        <section className="py-12 md:py-20" id="how-it-works">
+          <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white text-center mb-8 md:mb-12">
             Create Professional Content in 4 Simple Steps
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            <div className="text-center">
-              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 transform hover:scale-110 transition">
-                <span className="text-2xl font-bold text-white">1</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+            {[
+              {
+                step: '1',
+                title: 'Upload Images',
+                description: 'Upload your product photos - AI automatically validates them'
+              },
+              {
+                step: '2',
+                title: 'Review & Approve',
+                description: 'See which images are valid products before proceeding'
+              },
+              {
+                step: '3',
+                title: 'Choose Platform',
+                description: 'Select Instagram, Facebook, or YouTube format'
+              },
+              {
+                step: '4',
+                title: 'Download & Share',
+                description: 'Get 3 unique marketing styles per product, ready to post'
+              }
+            ].map((item, index) => (
+              <div key={index} className="text-center">
+                <div className="w-16 h-16 md:w-20 md:h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 transform hover:scale-110 transition">
+                  <span className="text-xl md:text-2xl font-bold text-white">{item.step}</span>
+                </div>
+                <h3 className="text-lg md:text-xl font-semibold text-white mb-2">{item.title}</h3>
+                <p className="text-white/70 text-sm md:text-base">{item.description}</p>
               </div>
-              <h3 className="text-xl font-semibold text-white mb-2">Upload Images</h3>
-              <p className="text-white/70">Upload your product photos - AI automatically validates them</p>
-            </div>
-            <div className="text-center">
-              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 transform hover:scale-110 transition">
-                <span className="text-2xl font-bold text-white">2</span>
-              </div>
-              <h3 className="text-xl font-semibold text-white mb-2">Review & Approve</h3>
-              <p className="text-white/70">See which images are valid products before proceeding</p>
-            </div>
-            <div className="text-center">
-              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 transform hover:scale-110 transition">
-                <span className="text-2xl font-bold text-white">3</span>
-              </div>
-              <h3 className="text-xl font-semibold text-white mb-2">Choose Platform</h3>
-              <p className="text-white/70">Select Instagram, Facebook, or YouTube format</p>
-            </div>
-            <div className="text-center">
-              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 transform hover:scale-110 transition">
-                <span className="text-2xl font-bold text-white">4</span>
-              </div>
-              <h3 className="text-xl font-semibold text-white mb-2">Download & Share</h3>
-              <p className="text-white/70">Get 3 unique marketing styles per product, ready to post</p>
-            </div>
+            ))}
           </div>
         </section>
 
         {/* Pricing Section */}
-        <section className="py-20" id="pricing">
-          <h2 className="text-3xl md:text-4xl font-bold text-white text-center mb-4">
+        <section className="py-12 md:py-20" id="pricing">
+          <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white text-center mb-4">
             Simple, Transparent Pricing
           </h2>
-          <p className="text-white/80 text-center mb-12 text-lg">
+          <p className="text-white/80 text-center mb-8 md:mb-12 text-lg">
             Start free, upgrade as you grow
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
             {pricingPlans.map((plan, index) => (
               <div
                 key={index}
-                className={`bg-white/10 backdrop-blur-md rounded-2xl p-8 border transition-all duration-200 transform hover:scale-105 ${
+                className={`bg-white/10 backdrop-blur-md rounded-2xl p-6 md:p-8 border transition-all duration-200 transform hover:scale-105 ${
                   plan.popular ? 'border-yellow-400 relative' : 'border-white/20'
                 }`}
               >
@@ -197,18 +240,18 @@ export default async function LandingPage() {
                     Most Popular
                   </span>
                 )}
-                <h3 className="text-2xl font-bold text-white mb-2">{plan.name}</h3>
-                <p className="text-white/70 mb-4">{plan.description}</p>
-                <p className="text-4xl font-bold text-white mb-2">
+                <h3 className="text-xl md:text-2xl font-bold text-white mb-2">{plan.name}</h3>
+                <p className="text-white/70 mb-4 text-sm md:text-base">{plan.description}</p>
+                <p className="text-3xl md:text-4xl font-bold text-white mb-2">
                   {plan.price}
-                  <span className="text-lg font-normal text-white/60">/month</span>
+                  <span className="text-base md:text-lg font-normal text-white/60">/month</span>
                 </p>
                 <p className="text-white/80 mb-6">{plan.credits} credits included</p>
                 <ul className="space-y-3 mb-8">
                   {plan.features.map((feature, i) => (
                     <li key={i} className="flex items-start gap-2">
-                      <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-                      <span className="text-white/80">{feature}</span>
+                      <CheckCircle className="w-4 h-4 md:w-5 md:h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                      <span className="text-white/80 text-sm md:text-base">{feature}</span>
                     </li>
                   ))}
                 </ul>
@@ -228,20 +271,20 @@ export default async function LandingPage() {
         </section>
 
         {/* Demo Section */}
-        <section className="py-20" id="demo">
-          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-12 border border-white/20">
-            <h2 className="text-3xl md:text-4xl font-bold text-white text-center mb-6">
+        <section className="py-12 md:py-20" id="demo">
+          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 md:p-12 border border-white/20">
+            <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white text-center mb-6">
               See Visual God in Action
             </h2>
-            <p className="text-xl text-white/80 text-center mb-8 max-w-2xl mx-auto">
+            <p className="text-lg md:text-xl text-white/80 text-center mb-8 max-w-2xl mx-auto">
               Watch how our AI transforms ordinary product photos into stunning marketing visuals in seconds.
             </p>
             <div className="text-center">
-              <div className="bg-white/10 rounded-2xl p-8 max-w-4xl mx-auto">
+              <div className="bg-white/10 rounded-2xl p-6 md:p-8 max-w-4xl mx-auto">
                 <div className="aspect-video bg-white/5 rounded-xl flex items-center justify-center">
                   <div className="text-center">
-                    <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Sparkles className="w-10 h-10 text-white" />
+                    <div className="w-16 h-16 md:w-20 md:h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Sparkles className="w-8 h-8 md:w-10 md:h-10 text-white" />
                     </div>
                     <p className="text-white/60">Demo video coming soon</p>
                   </div>
@@ -252,44 +295,44 @@ export default async function LandingPage() {
         </section>
 
         {/* CTA Section */}
-        <section className="py-20 text-center">
-          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-12 max-w-3xl mx-auto border border-white/20">
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+        <section className="py-12 md:py-20 text-center">
+          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 md:p-12 max-w-3xl mx-auto border border-white/20">
+            <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold text-white mb-4">
               Ready to Create Amazing Content?
             </h2>
-            <p className="text-xl text-white/80 mb-8">
+            <p className="text-lg md:text-xl text-white/80 mb-8">
               Join thousands of creators using Visual God to transform their products into stunning marketing visuals.
             </p>
             <Link
               href={user ? "/dashboard" : "/auth/register"}
-              className="inline-flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-4 rounded-xl font-semibold text-lg transition shadow-lg transform hover:scale-105"
+              className="inline-flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-6 md:px-8 py-3 md:py-4 rounded-xl font-semibold text-lg transition shadow-lg transform hover:scale-105"
             >
               {user ? "Go to Dashboard" : "Start Your Free Trial"}
               <ArrowRight className="w-5 h-5" />
             </Link>
-            <p className="text-white/60 mt-4">✨ AI validation • 3 styles per product • No setup required</p>
+            <p className="text-white/60 mt-4 text-sm md:text-base">✨ AI validation • 3 styles per product • No setup required</p>
           </div>
         </section>
 
         {/* Footer */}
-        <footer className="py-12 border-t border-white/20 mt-20">
+        <footer className="py-8 md:py-12 border-t border-white/20 mt-12 md:mt-20">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-white" />
               <span className="text-lg font-semibold text-white">Visual God</span>
             </div>
-            <div className="flex gap-6">
-              <Link href="/terms" className="text-white/60 hover:text-white transition">
+            <div className="flex gap-4 md:gap-6">
+              <Link href="/terms" className="text-white/60 hover:text-white transition text-sm md:text-base">
                 Terms
               </Link>
-              <Link href="/privacy" className="text-white/60 hover:text-white transition">
+              <Link href="/privacy" className="text-white/60 hover:text-white transition text-sm md:text-base">
                 Privacy
               </Link>
-              <Link href="/contact" className="text-white/60 hover:text-white transition">
+              <Link href="/contact" className="text-white/60 hover:text-white transition text-sm md:text-base">
                 Contact
               </Link>
             </div>
-            <p className="text-white/60">© 2024 Visual God. All rights reserved.</p>
+            <p className="text-white/60 text-sm md:text-base">© 2024 Visual God. All rights reserved.</p>
           </div>
         </footer>
       </div>
