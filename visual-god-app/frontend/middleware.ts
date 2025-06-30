@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/middleware.ts
-// FIXED VERSION - Faster, cleaner middleware with better routing
+// OPTIMIZED VERSION - Better performance, cleaner auth flow, proper error handling
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
@@ -27,45 +27,70 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Get the pathname
+  // Get the pathname and search params
   const pathname = request.nextUrl.pathname
+  const searchParams = request.nextUrl.searchParams
 
-  // Define route types
-  const publicRoutes = [
+  // Skip middleware for static files, API routes (except auth), and assets
+  if (
+    pathname.startsWith('/_next/') ||
+    pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/') ||
+    pathname.includes('.') && !pathname.endsWith('.html') ||
+    pathname.startsWith('/favicon') ||
+    pathname.startsWith('/public/')
+  ) {
+    return supabaseResponse
+  }
+
+  // Define route categories for better organization
+  const publicRoutes = new Set([
     '/',
     '/auth/login',
     '/auth/register', 
     '/auth/callback',
+    '/auth/confirm',
+    '/auth/error',
     '/auth/forgot-password',
     '/pricing',
     '/terms',
     '/privacy',
     '/contact'
+  ])
+
+  const authOnlyRoutes = new Set([
+    '/auth/login', 
+    '/auth/register',
+    '/auth/forgot-password'
+  ])
+
+  const protectedRoutes = [
+    '/dashboard',
+    '/profile'
   ]
 
-  const authRoutes = ['/auth/login', '/auth/register']
-  const protectedRoutes = ['/dashboard', '/profile']
+  // Check if current path is public
+  const isPublicRoute = publicRoutes.has(pathname)
+  const isAuthOnlyRoute = authOnlyRoutes.has(pathname)
+  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route))
+  const isAuthConfirmRoute = pathname === '/auth/confirm'
 
-  // Skip auth check for static files and API routes
-  if (
-    pathname.startsWith('/_next/') ||
-    pathname.startsWith('/api/') ||
-    pathname.includes('.') ||
-    pathname.startsWith('/favicon')
-  ) {
+  // Special handling for auth confirmation route
+  if (isAuthConfirmRoute) {
+    // Let the confirmation route handle its own logic
     return supabaseResponse
   }
 
-  // Check if route is public
-  const isPublicRoute = publicRoutes.includes(pathname)
-  const isAuthRoute = authRoutes.includes(pathname)
-  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route))
-
-  // Only check auth for protected routes to improve performance
+  // Only check auth for protected routes or auth-only routes to improve performance
   let user = null
-  if (isProtectedRoute || isAuthRoute) {
-    const { data: { user: authUser } } = await supabase.auth.getUser()
-    user = authUser
+  if (isProtectedRoute || isAuthOnlyRoute) {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      user = authUser
+    } catch (error) {
+      console.error('Auth check failed:', error)
+      // If auth check fails, treat as unauthenticated
+      user = null
+    }
   }
 
   // Redirect logic
@@ -77,9 +102,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl)
   }
 
-  if (isAuthRoute && user) {
+  if (isAuthOnlyRoute && user) {
     // Redirect authenticated users away from auth pages
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    // Check if there's a redirectedFrom parameter
+    const redirectedFrom = searchParams.get('redirectedFrom')
+    const destination = redirectedFrom && protectedRoutes.some(route => redirectedFrom.startsWith(route)) 
+      ? redirectedFrom 
+      : '/dashboard'
+    
+    return NextResponse.redirect(new URL(destination, request.url))
+  }
+
+  // Handle auth errors in URL - redirect to proper error page
+  if (pathname === '/' && searchParams.has('error')) {
+    const redirectUrl = request.nextUrl.clone()
+    redirectUrl.pathname = '/auth/error'
+    // Preserve the error parameter
+    redirectUrl.searchParams.set('error', searchParams.get('error') || 'Unknown error')
+    return NextResponse.redirect(redirectUrl)
   }
 
   // Allow all other routes (including homepage for both auth and non-auth users)
@@ -92,9 +132,11 @@ export const config = {
      * Match all request paths except:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public files with extensions
+     * - favicon.ico, robots.txt, sitemap.xml, etc.
+     * - public files with extensions (images, etc.)
+     * But include:
+     * - All pages and API routes (excluding most /api/ routes for performance)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(png|jpg|jpeg|gif|webp|svg|ico)$).*)',
   ],
 }

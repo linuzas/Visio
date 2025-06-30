@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/app/auth/confirm/route.ts
-// NEW FILE - Create this email confirmation handler
+// FIXED VERSION - Removed URLSearchParams.clear() errors
 
 import { type EmailOtpType } from '@supabase/supabase-js'
 import { type NextRequest, NextResponse } from 'next/server'
@@ -17,59 +17,122 @@ export async function GET(request: NextRequest) {
   console.log('Type:', type)
   console.log('Next:', next)
 
-  if (token_hash && type) {
-    const supabase = await createServerClient()
+  // Check if we have the required parameters
+  if (!token_hash || !type) {
+    console.log('❌ Missing required parameters')
+    
+    // Redirect to error page with specific error
+    redirectTo.pathname = '/auth/error'
+    // Remove all search params and set error
+    redirectTo.search = ''
+    redirectTo.searchParams.set('error', 'Missing verification parameters')
+    
+    return NextResponse.redirect(redirectTo)
+  }
 
-    try {
-      const { error } = await supabase.auth.verifyOtp({
-        type,
-        token_hash,
-      })
+  const supabase = await createServerClient()
 
-      if (!error) {
-        console.log('✅ Email verification successful')
-        
-        // Successful verification - redirect to dashboard or specified page
-        redirectTo.pathname = next.startsWith('/') ? next : '/dashboard'
-        redirectTo.searchParams.delete('token_hash')
-        redirectTo.searchParams.delete('type')
-        redirectTo.searchParams.delete('next')
-        
-        return NextResponse.redirect(redirectTo)
-      } else {
-        console.error('❌ Email verification failed:', error)
-        
-        // Verification failed - redirect to error page
-        redirectTo.pathname = '/auth/error'
-        redirectTo.searchParams.delete('token_hash')
-        redirectTo.searchParams.delete('type')
-        redirectTo.searchParams.delete('next')
-        redirectTo.searchParams.set('error', error.message)
-        
-        return NextResponse.redirect(redirectTo)
-      }
-    } catch (error) {
-      console.error('❌ Unexpected error during verification:', error)
+  try {
+    console.log('🔄 Attempting to verify OTP...')
+    
+    const { data, error } = await supabase.auth.verifyOtp({
+      type,
+      token_hash,
+    })
+
+    if (error) {
+      console.error('❌ Email verification failed:', error.message)
       
-      // Unexpected error - redirect to error page
+      // Handle specific error types
+      let errorMessage = error.message
+      
+      if (error.message.includes('expired')) {
+        errorMessage = 'expired'
+      } else if (error.message.includes('invalid')) {
+        errorMessage = 'invalid'
+      } else if (error.message.includes('already')) {
+        errorMessage = 'already confirmed'
+      }
+      
+      // Redirect to error page with specific error
       redirectTo.pathname = '/auth/error'
-      redirectTo.searchParams.delete('token_hash')
-      redirectTo.searchParams.delete('type')
-      redirectTo.searchParams.delete('next')
-      redirectTo.searchParams.set('error', 'An unexpected error occurred')
+      redirectTo.search = ''
+      redirectTo.searchParams.set('error', errorMessage)
       
       return NextResponse.redirect(redirectTo)
     }
-  }
 
-  console.log('❌ Invalid or missing verification parameters')
-  
-  // Missing or invalid parameters - redirect to error page
-  redirectTo.pathname = '/auth/error'
-  redirectTo.searchParams.delete('token_hash')
-  redirectTo.searchParams.delete('type')
-  redirectTo.searchParams.delete('next')
-  redirectTo.searchParams.set('error', 'Invalid verification link')
-  
-  return NextResponse.redirect(redirectTo)
+    if (data?.user) {
+      console.log('✅ Email verification successful for user:', data.user.email)
+      
+      // Check if user already has a profile, create one if needed
+      try {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', data.user.id)
+          .single()
+
+        if (!existingProfile) {
+          console.log('🔄 Creating profile for new user...')
+          
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+              id: data.user.id,
+              username: data.user.email?.split('@')[0],
+              full_name: data.user.user_metadata?.full_name || null,
+              email: data.user.email,
+              plan: 'free',
+              credits_total: 10,
+              credits_used: 0
+            })
+
+          if (profileError) {
+            console.error('⚠️ Failed to create profile:', profileError.message)
+            // Don't fail the whole process, just log the error
+          } else {
+            console.log('✅ Profile created successfully')
+          }
+        }
+      } catch (profileError) {
+        console.error('⚠️ Profile creation error:', profileError)
+        // Don't fail the whole process
+      }
+      
+      // Successful verification - redirect to success page or dashboard
+      if (type === 'signup') {
+        // For signup confirmations, show success message first
+        redirectTo.pathname = '/auth/error'
+        redirectTo.search = ''
+        redirectTo.searchParams.set('success', 'true')
+        redirectTo.searchParams.set('message', 'Email confirmed successfully')
+      } else {
+        // For other types, go directly to dashboard
+        redirectTo.pathname = next.startsWith('/') ? next : '/dashboard'
+        redirectTo.search = ''
+      }
+      
+      return NextResponse.redirect(redirectTo)
+    }
+
+    // No user data but no error either - unusual case
+    console.log('⚠️ Verification completed but no user data returned')
+    
+    redirectTo.pathname = '/auth/error'
+    redirectTo.search = ''
+    redirectTo.searchParams.set('error', 'Verification completed but no user session created')
+    
+    return NextResponse.redirect(redirectTo)
+
+  } catch (error) {
+    console.error('❌ Unexpected error during verification:', error)
+    
+    // Unexpected error - redirect to error page
+    redirectTo.pathname = '/auth/error'
+    redirectTo.search = ''
+    redirectTo.searchParams.set('error', 'An unexpected error occurred during verification')
+    
+    return NextResponse.redirect(redirectTo)
+  }
 }

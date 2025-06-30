@@ -1,12 +1,12 @@
 // File: visual-god-app/frontend/components/auth/register-form.tsx
-// UPDATED VERSION - Fixed email redirect URL
+// IMPROVED VERSION - Better email confirmation handling and user experience
 
 'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Loader2, Mail, Lock, User, AlertCircle, CheckCircle } from 'lucide-react'
+import { Loader2, Mail, Lock, User, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 export function RegisterForm() {
@@ -20,6 +20,9 @@ export function RegisterForm() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [emailSent, setEmailSent] = useState(false)
+  const [resendingEmail, setResendingEmail] = useState(false)
+  
   const router = useRouter()
   const supabase = createClient()
 
@@ -61,7 +64,9 @@ export function RegisterForm() {
     }
 
     try {
-      const { error } = await supabase.auth.signUp({
+      console.log('🔄 Attempting to register user...')
+      
+      const { data, error } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
@@ -73,45 +78,129 @@ export function RegisterForm() {
         },
       })
 
-      if (error) throw error
+      if (error) {
+        console.error('❌ Registration error:', error)
+        throw error
+      }
 
-      setSuccess(true)
+      console.log('✅ Registration successful:', data)
+      
+      // Check if email confirmation is required
+      if (data.user && !data.user.email_confirmed_at) {
+        setEmailSent(true)
+        setSuccess(true)
+        console.log('📧 Confirmation email sent to:', formData.email)
+      } else if (data.user && data.user.email_confirmed_at) {
+        // User is immediately confirmed (rare case)
+        console.log('✅ User immediately confirmed, redirecting...')
+        router.push('/dashboard')
+      }
+
     } catch (error: any) {
-      console.error('Registration error:', error)
-      setError(error.message)
+      console.error('❌ Registration failed:', error)
+      
+      // Handle specific error types
+      if (error.message.includes('already registered')) {
+        setError('An account with this email already exists. Please sign in instead.')
+      } else if (error.message.includes('invalid email')) {
+        setError('Please enter a valid email address.')
+      } else if (error.message.includes('weak password')) {
+        setError('Password is too weak. Please choose a stronger password.')
+      } else {
+        setError(error.message || 'Registration failed. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  if (success) {
+  const handleResendEmail = async () => {
+    setResendingEmail(true)
+    setError(null)
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: formData.email,
+        options: {
+          emailRedirectTo: getRedirectURL(),
+        }
+      })
+
+      if (error) throw error
+
+      setError(null)
+      // Show temporary success message
+      setTimeout(() => {
+        setError('✅ Confirmation email resent successfully!')
+        setTimeout(() => setError(null), 5000)
+      }, 100)
+
+    } catch (error: any) {
+      console.error('❌ Resend email failed:', error)
+      setError('Failed to resend email. Please try again.')
+    } finally {
+      setResendingEmail(false)
+    }
+  }
+
+  if (success && emailSent) {
     return (
-      <div className="text-center space-y-4">
+      <div className="text-center space-y-6">
         <div className="inline-flex items-center justify-center w-16 h-16 bg-green-500/20 rounded-full">
           <CheckCircle className="w-8 h-8 text-green-400" />
         </div>
-        <h3 className="text-xl font-semibold text-white">Check your email!</h3>
-        <div className="text-white/80 space-y-2">
-          <p>
-            We've sent a confirmation link to <strong>{formData.email}</strong>
-          </p>
-          <p>
-            Please check your email and click the confirmation link to verify your account.
-          </p>
-          <p className="text-sm text-white/60">
-            If you don't see the email, check your spam folder.
-          </p>
+        
+        <div>
+          <h3 className="text-xl font-semibold text-white mb-2">Check your email!</h3>
+          <div className="text-white/80 space-y-3">
+            <p>
+              We've sent a confirmation link to <strong className="text-white">{formData.email}</strong>
+            </p>
+            <p>
+              Please check your email and click the confirmation link to verify your account.
+            </p>
+            <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-4 text-sm">
+              <p className="text-blue-200 mb-2">
+                <strong>Important:</strong> You must confirm your email before you can sign in.
+              </p>
+              <p className="text-blue-300/80">
+                If you don't see the email, check your spam folder or click resend below.
+              </p>
+            </div>
+          </div>
         </div>
-        <div className="space-y-2 pt-4">
+
+        <div className="space-y-3">
+          <button
+            onClick={handleResendEmail}
+            disabled={resendingEmail}
+            className="flex items-center justify-center gap-2 w-full bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {resendingEmail ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Resending...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-4 h-4" />
+                Resend Email
+              </>
+            )}
+          </button>
+
           <Link
             href="/auth/login"
-            className="inline-block text-white font-semibold hover:text-pink-200 underline underline-offset-2"
+            className="inline-block text-white font-semibold hover:text-pink-200 underline underline-offset-2 transition-colors"
           >
             Back to login
           </Link>
-          <p className="text-white/60 text-xs">
-            Already confirmed? Sign in above
-          </p>
+        </div>
+
+        <div className="text-white/60 text-xs space-y-1">
+          <p>Having trouble? Contact support</p>
+          <p>Confirmation link expires in 24 hours</p>
         </div>
       </div>
     )
@@ -122,9 +211,21 @@ export function RegisterForm() {
   return (
     <form onSubmit={handleRegister} className="space-y-6">
       {error && (
-        <div className="bg-red-500/20 border border-red-400 rounded-lg p-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
-          <p className="text-red-200 text-sm font-medium">{error}</p>
+        <div className={`border rounded-lg p-4 flex items-start gap-3 ${
+          error.startsWith('✅') 
+            ? 'bg-green-500/20 border-green-400' 
+            : 'bg-red-500/20 border-red-400'
+        }`}>
+          {error.startsWith('✅') ? (
+            <CheckCircle className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
+          )}
+          <p className={`text-sm font-medium ${
+            error.startsWith('✅') ? 'text-green-200' : 'text-red-200'
+          }`}>
+            {error.replace('✅ ', '')}
+          </p>
         </div>
       )}
 
@@ -245,7 +346,7 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={loading}
-        className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
+        className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:hover:scale-100"
       >
         {loading ? (
           <>

@@ -1,12 +1,12 @@
 // File: visual-god-app/frontend/app/dashboard/dashboard-content.tsx
-// FIXED VERSION - Remove AI enhancement toggle and fix 500 API errors
+// FIXED VERSION - Better responsive navigation and mobile optimization
 
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff, RefreshCw, Trash2 } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff, RefreshCw, Trash2, Menu, LogOut } from 'lucide-react'
 import Link from 'next/link'
 
 interface GeneratedImage {
@@ -103,6 +103,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [processingStep, setProcessingStep] = useState('')
   const [cancelRequested, setCancelRequested] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([])
   const [validating, setValidating] = useState(false)
@@ -120,8 +121,24 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const creditsRemaining = stats?.credits_remaining || 0
   const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
   const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
-  // FIXED: Always generate images now, calculate credits as 3 per product
   const requiredCredits = validProducts.length * 3
+
+  // Close mobile menu when route changes or when clicking outside
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [])
+
+  // Close mobile menu on window resize to desktop size
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setMobileMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -142,6 +159,17 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setProcessing(false)
     setProcessingStep('')
     setUploadProgress(0)
+  }
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut()
+      setMobileMenuOpen(false)
+      router.push('/')
+      router.refresh()
+    } catch (error) {
+      console.error('Logout error:', error)
+    }
   }
 
   const handleDrag = (e: React.DragEvent) => {
@@ -190,7 +218,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     const newFiles = files.filter((_, i) => i !== index)
     setFiles(newFiles)
     
-    // Reset file input value to allow re-uploading same file
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -198,7 +225,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     if (newFiles.length > 0) {
       validateImages(newFiles)
     } else {
-      // Reset all validation states when no files
       setValidationResults([])
       setCanProceed(false)
       setShowValidationDetails(false)
@@ -226,13 +252,12 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     try {
       console.log(`🔍 Starting validation for ${filesToValidate.length} images...`)
       
-      // Show progress during image conversion
       const imagePromises = filesToValidate.map((file, index) => {
         return new Promise<{ base64: string; filename: string }>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => {
             const base64 = e.target?.result as string
-            setValidationProgress(((index + 1) / filesToValidate.length) * 50) // First 50% for conversion
+            setValidationProgress(((index + 1) / filesToValidate.length) * 50)
             resolve({
               base64: base64.split(',')[1],
               filename: file.name
@@ -244,7 +269,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
       const images = await Promise.all(imagePromises)
       
-      setValidationProgress(60) // 60% when images are converted
+      setValidationProgress(60)
 
       const response = await fetch('/api/validate', {
         method: 'POST',
@@ -254,14 +279,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         body: JSON.stringify({ images })
       })
 
-      setValidationProgress(90) // 90% when API responds
+      setValidationProgress(90)
 
       const data = await response.json()
 
       if (data.success) {
         setValidationResults(data.validation_results || [])
         setCanProceed(data.can_proceed || false)
-        setValidationProgress(100) // 100% when complete
+        setValidationProgress(100)
         setHasValidated(true)
         
         console.log(`✅ Validation complete: ${data.validation_results?.length || 0} results`)
@@ -280,10 +305,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       setValidationProgress(100)
       setHasValidated(true)
     } finally {
-      // Keep spinner for minimum duration for better UX
       setTimeout(() => {
         setValidating(false)
-      }, 800) // Minimum 800ms for smooth transition
+      }, 800)
     }
   }
 
@@ -303,7 +327,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       return
     }
 
-    // FIXED: Always check credits since we always generate images
     if (creditsRemaining < requiredCredits) {
       alert(`Not enough credits. You need ${requiredCredits} credits but only have ${creditsRemaining}.`)
       return
@@ -349,7 +372,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         body: JSON.stringify({
           images,
           userId: profile.id,
-          generate_images: true, // FIXED: Always generate images
+          generate_images: true,
           image_size: selectedSize,
           sessionId: `session_${Date.now()}`
         }),
@@ -409,59 +432,189 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     }
   }
 
-  // Navigation component
+  // FIXED: Responsive Dashboard Navigation Component
   const DashboardNav = () => (
-    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white mb-1 flex items-center gap-2">
-            <Sparkles className="w-8 h-8" />
-            Welcome back, {profile?.full_name || profile?.username || 'Creator'}!
-          </h1>
-          <p className="text-white/80">Create amazing content with AI</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/dashboard/preferences"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <Settings className="w-4 h-4" />
-            Preferences
-          </Link>
-          <Link
-            href="/dashboard/history"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <History className="w-4 h-4" />
-            History
-          </Link>
-          <Link
-            href="/dashboard/stats"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <BarChart3 className="w-4 h-4" />
-            Stats
-          </Link>
-          <Link
-            href="/profile"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <User className="w-4 h-4" />
-            Profile
-          </Link>
+    <>
+      <nav className="bg-white/10 backdrop-blur-md rounded-2xl lg:rounded-3xl p-4 lg:p-6 mb-6 lg:mb-8 shadow-2xl border border-white/20 relative z-50">
+        <div className="flex items-center justify-between">
+          {/* Left: Logo + Title */}
+          <div className="flex items-center gap-3 lg:gap-4 flex-1 min-w-0">
+            <Link 
+              href="/dashboard" 
+              className="flex items-center gap-2 lg:gap-3 hover:scale-105 transition-transform flex-shrink-0"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <Sparkles className="w-6 h-6 lg:w-8 lg:h-8 text-white" />
+              <span className="text-lg lg:text-2xl font-bold text-white hidden sm:block">Visual God</span>
+              <span className="text-lg font-bold text-white sm:hidden">VG</span>
+            </Link>
+            
+            <div className="hidden md:block w-px h-6 lg:h-8 bg-white/20" />
+            
+            <div className="hidden md:block min-w-0 flex-1">
+              <h1 className="text-lg lg:text-xl font-bold text-white truncate">
+                Welcome back, {profile?.full_name || profile?.username || 'Creator'}!
+              </h1>
+              <p className="text-white/60 text-sm lg:text-base truncate">Create amazing content with AI</p>
+            </div>
+          </div>
+
+          {/* Desktop Navigation */}
+          <div className="hidden md:flex items-center gap-2 lg:gap-3">
+            <Link
+              href="/dashboard/preferences"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-3 lg:px-4 py-2 rounded-lg lg:rounded-xl transition-all duration-200 transform hover:scale-105 text-sm lg:text-base"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden lg:inline">Preferences</span>
+            </Link>
+            <Link
+              href="/dashboard/history"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-3 lg:px-4 py-2 rounded-lg lg:rounded-xl transition-all duration-200 transform hover:scale-105 text-sm lg:text-base"
+            >
+              <History className="w-4 h-4" />
+              <span className="hidden lg:inline">History</span>
+            </Link>
+            <Link
+              href="/dashboard/stats"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-3 lg:px-4 py-2 rounded-lg lg:rounded-xl transition-all duration-200 transform hover:scale-105 text-sm lg:text-base"
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span className="hidden lg:inline">Stats</span>
+            </Link>
+            <Link
+              href="/profile"
+              className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-3 lg:px-4 py-2 rounded-lg lg:rounded-xl transition-all duration-200 transform hover:scale-105 text-sm lg:text-base"
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden lg:inline">Profile</span>
+            </Link>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-3 lg:px-4 py-2 rounded-lg lg:rounded-xl transition-all duration-200 transform hover:scale-105 text-sm lg:text-base"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden lg:inline">Sign Out</span>
+            </button>
+          </div>
+
+          {/* Mobile Menu Button */}
           <button
-            onClick={async () => {
-              await supabase.auth.signOut()
-              router.push('/')
-            }}
-            className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden text-white p-2 hover:bg-white/20 rounded-lg transition flex-shrink-0"
+            aria-label="Toggle menu"
           >
-            <ArrowLeft className="w-4 h-4" />
-            Sign Out
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
         </div>
+
+        {/* Mobile Title (shown when desktop title is hidden) */}
+        <div className="md:hidden mt-4 pt-4 border-t border-white/20">
+          <h1 className="text-lg font-bold text-white">
+            Welcome back, {profile?.full_name?.split(' ')[0] || profile?.username || 'Creator'}!
+          </h1>
+          <p className="text-white/60 text-sm">Create amazing content with AI</p>
+        </div>
+      </nav>
+
+      {/* Mobile Menu Overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Mobile Menu Slide-out */}
+      <div className={`fixed top-0 left-0 h-full w-80 max-w-[85vw] bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 transform transition-transform duration-300 z-50 md:hidden ${
+        mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="p-6">
+          {/* Mobile Menu Header */}
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-8 h-8 text-white" />
+              <span className="text-xl font-bold text-white">Visual God</span>
+            </div>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="text-white p-2 hover:bg-white/20 rounded-lg transition"
+              aria-label="Close menu"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* User Info */}
+          <div className="mb-8 p-4 bg-white/10 rounded-xl">
+            <h3 className="text-white font-semibold">
+              {profile?.full_name || profile?.username || 'Creator'}
+            </h3>
+            <p className="text-white/60 text-sm">{profile?.email}</p>
+            <div className="mt-2 flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-white/60" />
+              <span className="text-white/80 text-sm">
+                {creditsRemaining} credits remaining
+              </span>
+            </div>
+          </div>
+
+          {/* Mobile Menu Items */}
+          <div className="space-y-2">
+            <Link
+              href="/dashboard"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center gap-3 bg-white/20 text-white px-4 py-3 rounded-xl transition-all duration-200"
+            >
+              <Home className="w-5 h-5" />
+              Dashboard
+            </Link>
+            <Link
+              href="/dashboard/history"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center gap-3 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-xl transition-all duration-200"
+            >
+              <History className="w-5 h-5" />
+              History
+            </Link>
+            <Link
+              href="/dashboard/stats"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center gap-3 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-xl transition-all duration-200"
+            >
+              <BarChart3 className="w-5 h-5" />
+              Stats
+            </Link>
+            <Link
+              href="/profile"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center gap-3 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-xl transition-all duration-200"
+            >
+              <User className="w-5 h-5" />
+              Profile
+            </Link>
+            <Link
+              href="/dashboard/preferences"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center gap-3 bg-white/10 hover:bg-white/20 text-white px-4 py-3 rounded-xl transition-all duration-200"
+            >
+              <Settings className="w-5 h-5" />
+              Preferences
+            </Link>
+            
+            <div className="pt-4 border-t border-white/20">
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-3 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-4 py-3 rounded-xl transition-all duration-200"
+              >
+                <LogOut className="w-5 h-5" />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 
   // File list component
@@ -504,7 +657,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     )
   }
 
-  // Validation results component (unchanged)
+  // Validation results component
   const ValidationResults = () => {
     if (!showValidationDetails && !validating) return null
 
@@ -629,14 +782,14 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   // If result exists, show results page
   if (result) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
+      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 lg:p-8">
         <div className="max-w-6xl mx-auto">
           <DashboardNav />
           
-          <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-              <h1 className="text-3xl md:text-4xl font-bold text-white flex items-center gap-3">
-                <Sparkles className="w-8 h-8 md:w-10 md:h-10" />
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl lg:rounded-3xl p-6 lg:p-8 shadow-2xl">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-8 gap-4">
+              <h1 className="text-2xl lg:text-4xl font-bold text-white flex items-center gap-3">
+                <Sparkles className="w-8 h-8 lg:w-10 lg:h-10" />
                 Visual God Results
               </h1>
               <div className="flex items-center gap-4">
@@ -679,8 +832,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
                 {result.generated_images && result.generated_images.length > 0 && (
                   <div className="bg-white/10 rounded-xl p-6">
-                    <h2 className="text-xl md:text-2xl font-semibold text-white mb-6 flex items-center gap-3">
-                      <Wand2 className="w-6 h-6 md:w-8 md:h-8" />
+                    <h2 className="text-xl lg:text-2xl font-semibold text-white mb-6 flex items-center gap-3">
+                      <Wand2 className="w-6 h-6 lg:w-8 lg:h-8" />
                       AI-Enhanced Images ({result.generated_images.length})
                       <span className="text-sm font-normal bg-white/20 px-2 py-1 rounded-full">
                         {IMAGE_SIZES[selectedSize].size}
@@ -700,7 +853,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                             <Package className="w-4 h-4" />
                             {product.product_name}
                           </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
                             {productImages.map((image, i) => (
                               <div key={i} className="bg-white/5 rounded-lg overflow-hidden transform hover:scale-105 transition-all duration-200 hover:shadow-xl">
                                 <div className={`relative group ${
@@ -767,45 +920,45 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 lg:p-8">
       <div className="max-w-6xl mx-auto">
         <DashboardNav />
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-6 lg:mb-8">
+          <div className="bg-white/10 backdrop-blur-md rounded-xl lg:rounded-2xl p-4 lg:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60 text-xs md:text-sm">Plan</span>
-              <CreditCard className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
+              <span className="text-white/60 text-xs lg:text-sm">Plan</span>
+              <CreditCard className="w-4 h-4 lg:w-5 lg:h-5 text-white/40" />
             </div>
-            <p className="text-lg md:text-2xl font-bold text-white capitalize">{profile.plan}</p>
+            <p className="text-lg lg:text-2xl font-bold text-white capitalize">{profile.plan}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-xl lg:rounded-2xl p-4 lg:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60 text-xs md:text-sm">Credits</span>
-              <Sparkles className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
+              <span className="text-white/60 text-xs lg:text-sm">Credits</span>
+              <Sparkles className="w-4 h-4 lg:w-5 lg:h-5 text-white/40" />
             </div>
-            <p className="text-lg md:text-2xl font-bold text-white">{creditsRemaining}/{profile.credits_total}</p>
+            <p className="text-lg lg:text-2xl font-bold text-white">{creditsRemaining}/{profile.credits_total}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-xl lg:rounded-2xl p-4 lg:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60 text-xs md:text-sm">Total Images</span>
-              <ImageIcon className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
+              <span className="text-white/60 text-xs lg:text-sm">Total Images</span>
+              <ImageIcon className="w-4 h-4 lg:w-5 lg:h-5 text-white/40" />
             </div>
-            <p className="text-lg md:text-2xl font-bold text-white">{stats?.total_images_generated || 0}</p>
+            <p className="text-lg lg:text-2xl font-bold text-white">{stats?.total_images_generated || 0}</p>
           </div>
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 md:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
+          <div className="bg-white/10 backdrop-blur-md rounded-xl lg:rounded-2xl p-4 lg:p-6 border border-white/20 hover:bg-white/15 transition-all duration-200 transform hover:scale-105">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-white/60 text-xs md:text-sm">Sessions</span>
-              <Wand2 className="w-4 h-4 md:w-5 md:h-5 text-white/40" />
+              <span className="text-white/60 text-xs lg:text-sm">Sessions</span>
+              <Wand2 className="w-4 h-4 lg:w-5 lg:h-5 text-white/40" />
             </div>
-            <p className="text-lg md:text-2xl font-bold text-white">{stats?.total_sessions || 0}</p>
+            <p className="text-lg lg:text-2xl font-bold text-white">{stats?.total_sessions || 0}</p>
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
-          <h2 className="text-xl md:text-2xl font-bold text-white mb-6 text-center">Create New Content</h2>
+        <div className="bg-white/10 backdrop-blur-md rounded-2xl lg:rounded-3xl p-6 lg:p-8 shadow-2xl">
+          <h2 className="text-xl lg:text-2xl font-bold text-white mb-6 text-center">Create New Content</h2>
 
           {/* Processing Overlay */}
           {processing && (
@@ -852,7 +1005,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
           {/* Upload Area */}
           <div
-            className={`border-2 border-dashed rounded-2xl p-6 md:p-8 text-center transition-all duration-200 ${
+            className={`border-2 border-dashed rounded-2xl p-6 lg:p-8 text-center transition-all duration-200 ${
               dragActive ? 'border-white bg-white/10 scale-105' : 'border-white/30 hover:border-white/50'
             }`}
             onDragEnter={handleDrag}
@@ -860,10 +1013,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             onDragOver={handleDrag}
             onDrop={handleDrop}
           >
-            <Upload className="w-12 h-12 md:w-16 md:h-16 text-white/60 mx-auto mb-4" />
-            <p className="text-white text-base md:text-lg mb-2">Drag & drop product images here</p>
+            <Upload className="w-12 h-12 lg:w-16 lg:h-16 text-white/60 mx-auto mb-4" />
+            <p className="text-white text-base lg:text-lg mb-2">Drag & drop product images here</p>
             <p className="text-white/60 mb-4">or</p>
-            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-4 md:px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
+            <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-4 lg:px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
               Browse Files
               <input
                 ref={fileInputRef}
@@ -874,7 +1027,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 className="hidden"
               />
             </label>
-            <p className="text-white/40 text-xs md:text-sm mt-4">
+            <p className="text-white/40 text-xs lg:text-sm mt-4">
               Upload product images only (no people/avatars) • JPEG, PNG, WEBP • Max 4MB each
             </p>
           </div>
@@ -919,8 +1072,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 </div>
               </div>
 
-              {/* REMOVED: AI Image Enhancement Toggle - Now Always Generate */}
-              {/* Automatic Generation Info */}
+              {/* AI Enhancement Info */}
               <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
                 <h4 className="text-white font-medium mb-2 flex items-center gap-2">
                   <Sparkles className="w-4 h-4" />
