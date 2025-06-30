@@ -1,67 +1,55 @@
 // File: visual-god-app/frontend/components/dashboard/history-content.tsx
+// OPTIMIZED VERSION - Simple gallery, faster loading, successful generations only
 
 'use client'
 
 import { useState } from 'react'
-import { Download, Clock, ImageIcon, Eye, X, Calendar, Package, Sparkles } from 'lucide-react'
-import { PageNavbar } from '@/components/navigation/navbar'
+import { Download, ImageIcon, Calendar, Sparkles, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 
 interface GeneratedImage {
   id: string
   filename: string
-  prompt_text: string
-  platform: string
-  size: string
   created_at: string
   metadata?: {
     base64?: string
     product_name?: string
     prompt_type?: string
     public_url?: string
-    storage_path?: string
-    storage_type?: string
   }
+  platform: string
+  size: string
 }
 
-interface GenerationSession {
+interface OptimizedSession {
   id: string
-  session_name: string | null
-  status: 'pending' | 'processing' | 'completed' | 'failed'
-  credits_used: number
   created_at: string
-  updated_at: string
-  metadata?: {
-    platform?: string
-    product_count?: number
-  }
-  generated_images?: GeneratedImage[]
+  credits_used: number
+  image_count: number
+  platform?: string
 }
 
 interface HistoryContentProps {
-  sessions: GenerationSession[]
+  sessions: OptimizedSession[]
+  images: GeneratedImage[]
   user: any
 }
 
-export function HistoryContent({ sessions, user }: HistoryContentProps) {
-  const [selectedSession, setSelectedSession] = useState<string | null>(null)
-  const [viewingImage, setViewingImage] = useState<GeneratedImage | null>(null)
-  const [imageLoadErrors, setImageLoadErrors] = useState<Set<string>>(new Set())
+export function HistoryContent({ sessions, images, user }: HistoryContentProps) {
+  const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null)
 
-  const downloadImage = (imageData: GeneratedImage) => {
+  const downloadImage = (image: GeneratedImage) => {
     try {
       let imageUrl = ''
-      let filename = imageData.filename || 'image.jpg'
+      let filename = image.filename || 'visual-god-image.jpg'
 
-      // Try different image sources in order of preference
-      if (imageData.metadata?.base64) {
-        // Use base64 from metadata
-        imageUrl = `data:image/jpeg;base64,${imageData.metadata.base64}`
-      } else if (imageData.metadata?.public_url) {
-        // Use public URL if available
-        imageUrl = imageData.metadata.public_url
+      // Try different image sources
+      if (image.metadata?.base64) {
+        imageUrl = `data:image/jpeg;base64,${image.metadata.base64}`
+      } else if (image.metadata?.public_url) {
+        imageUrl = image.metadata.public_url
       } else {
-        console.error('No image data available for download')
+        console.error('No image data available')
         return
       }
 
@@ -72,8 +60,6 @@ export function HistoryContent({ sessions, user }: HistoryContentProps) {
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-
-      console.log(`Downloaded: ${filename}`)
     } catch (error) {
       console.error('Download failed:', error)
       alert('Failed to download image. Please try again.')
@@ -81,41 +67,16 @@ export function HistoryContent({ sessions, user }: HistoryContentProps) {
   }
 
   const getImageSrc = (image: GeneratedImage): string | null => {
-    // Return null if we know this image has load errors
-    if (imageLoadErrors.has(image.id)) {
-      return null
-    }
-
-    // Try different image sources
     if (image.metadata?.base64) {
       return `data:image/jpeg;base64,${image.metadata.base64}`
     } else if (image.metadata?.public_url) {
       return image.metadata.public_url
     }
-    
     return null
   }
 
-  const handleImageError = (imageId: string) => {
-    setImageLoadErrors(prev => new Set([...prev, imageId]))
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'bg-green-500/20 text-green-300 border-green-500/40'
-      case 'processing':
-        return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'
-      case 'failed':
-        return 'bg-red-500/20 text-red-300 border-red-500/40'
-      default:
-        return 'bg-gray-500/20 text-gray-300 border-gray-500/40'
-    }
-  }
-
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      year: 'numeric',
+    return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -123,54 +84,93 @@ export function HistoryContent({ sessions, user }: HistoryContentProps) {
     })
   }
 
-  const getTotalImages = (sessions: GenerationSession[]) => {
-    return sessions.reduce((total, session) => {
-      return total + (session.generated_images?.length || 0)
-    }, 0)
+  const getAspectRatio = (platform: string) => {
+    switch (platform) {
+      case 'instagram': return 'aspect-[9/16]'
+      case 'facebook': return 'aspect-square'
+      case 'youtube': return 'aspect-[16/9]'
+      default: return 'aspect-square'
+    }
   }
 
-  const getTotalCreditsUsed = (sessions: GenerationSession[]) => {
-    return sessions.reduce((total, session) => total + session.credits_used, 0)
+  const getPlatformLabel = (platform: string) => {
+    switch (platform) {
+      case 'instagram': return 'Instagram'
+      case 'facebook': return 'Facebook'
+      case 'youtube': return 'YouTube'
+      default: return platform
+    }
   }
+
+  // Group images by date for better organization
+  const imagesByDate = images.reduce((acc, image) => {
+    const date = new Date(image.created_at).toDateString()
+    if (!acc[date]) {
+      acc[date] = []
+    }
+    acc[date].push(image)
+    return acc
+  }, {} as Record<string, GeneratedImage[]>)
+
+  const totalImages = images.length
+  const totalCreditsUsed = sessions.reduce((sum, session) => sum + session.credits_used, 0)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-8">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
-        <PageNavbar 
-          user={user}
-          title="Generation History"
-          subtitle="View and download your previous creations"
-        />
-        
-        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-8 shadow-2xl">
-          {/* Stats Summary */}
-          {sessions.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              <div className="bg-white/10 rounded-xl p-6 text-center hover:bg-white/15 transition">
-                <Sparkles className="w-8 h-8 text-white mx-auto mb-2" />
-                <p className="text-2xl font-bold text-white">{sessions.length}</p>
-                <p className="text-white/60 text-sm">Total Sessions</p>
-              </div>
-              <div className="bg-white/10 rounded-xl p-6 text-center hover:bg-white/15 transition">
-                <ImageIcon className="w-8 h-8 text-white mx-auto mb-2" />
-                <p className="text-2xl font-bold text-white">{getTotalImages(sessions)}</p>
-                <p className="text-white/60 text-sm">Images Generated</p>
-              </div>
-              <div className="bg-white/10 rounded-xl p-6 text-center hover:bg-white/15 transition">
-                <Package className="w-8 h-8 text-white mx-auto mb-2" />
-                <p className="text-2xl font-bold text-white">{getTotalCreditsUsed(sessions)}</p>
-                <p className="text-white/60 text-sm">Credits Used</p>
+        {/* Simple Header */}
+        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Link>
+              <div>
+                <h1 className="text-xl md:text-2xl font-bold text-white">Your Gallery</h1>
+                <p className="text-white/60 text-sm">{totalImages} images created</p>
               </div>
             </div>
-          )}
+            <div className="flex items-center gap-2 text-white/60 text-sm">
+              <Sparkles className="w-4 h-4" />
+              <span>{totalCreditsUsed} credits used</span>
+            </div>
+          </div>
+        </div>
 
-          {/* Sessions List */}
-          {sessions.length === 0 ? (
+        <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
+          {/* Quick Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-white/10 rounded-xl p-4 text-center">
+              <p className="text-2xl font-bold text-white">{totalImages}</p>
+              <p className="text-white/60 text-sm">Total Images</p>
+            </div>
+            <div className="bg-white/10 rounded-xl p-4 text-center">
+              <p className="text-2xl font-bold text-white">{sessions.length}</p>
+              <p className="text-white/60 text-sm">Sessions</p>
+            </div>
+            <div className="bg-white/10 rounded-xl p-4 text-center">
+              <p className="text-2xl font-bold text-white">{totalCreditsUsed}</p>
+              <p className="text-white/60 text-sm">Credits Used</p>
+            </div>
+            <div className="bg-white/10 rounded-xl p-4 text-center">
+              <p className="text-2xl font-bold text-white">
+                {Object.keys(imagesByDate).length}
+              </p>
+              <p className="text-white/60 text-sm">Active Days</p>
+            </div>
+          </div>
+
+          {/* Image Gallery */}
+          {totalImages === 0 ? (
             <div className="text-center py-12">
-              <Clock className="w-16 h-16 text-white/40 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-white mb-2">No generation history yet</h3>
+              <ImageIcon className="w-16 h-16 text-white/40 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-white mb-2">No images yet</h3>
               <p className="text-white/60 mb-6">
-                Start creating amazing content to see your history here
+                Start creating amazing content to see your gallery here
               </p>
               <Link
                 href="/dashboard"
@@ -181,175 +181,131 @@ export function HistoryContent({ sessions, user }: HistoryContentProps) {
               </Link>
             </div>
           ) : (
-            <div className="space-y-4">
-              {sessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="bg-white/10 rounded-xl border border-white/20 hover:bg-white/15 transition-all duration-200"
-                >
-                  <div 
-                    className="p-6 cursor-pointer"
-                    onClick={() => setSelectedSession(selectedSession === session.id ? null : session.id)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="text-white font-semibold text-lg mb-2">
-                          {session.session_name || `Session ${formatDate(session.created_at)}`}
-                        </h3>
-                        <div className="flex items-center gap-4 text-sm text-white/60">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4" />
-                            {formatDate(session.created_at)}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Package className="w-4 h-4" />
-                            {session.credits_used} credit{session.credits_used !== 1 ? 's' : ''}
-                          </div>
-                          {session.metadata?.platform && (
-                            <div className="flex items-center gap-1">
-                              <ImageIcon className="w-4 h-4" />
-                              {session.metadata.platform}
+            <div className="space-y-8">
+              {Object.entries(imagesByDate)
+                .sort(([a], [b]) => new Date(b).getTime() - new Date(a).getTime())
+                .map(([date, dayImages]) => (
+                  <div key={date}>
+                    <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+                      <Calendar className="w-4 h-4" />
+                      {new Date(date).toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      })}
+                      <span className="text-white/60 text-sm">({dayImages.length} images)</span>
+                    </h3>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                      {dayImages.map((image) => {
+                        const imageSrc = getImageSrc(image)
+                        
+                        return (
+                          <div
+                            key={image.id}
+                            className="bg-white/5 rounded-lg overflow-hidden group hover:bg-white/10 transition-all duration-200 transform hover:scale-105 cursor-pointer"
+                            onClick={() => setSelectedImage(image)}
+                          >
+                            <div className={`relative ${getAspectRatio(image.platform)}`}>
+                              {imageSrc ? (
+                                <>
+                                  <img
+                                    src={imageSrc}
+                                    alt={image.filename}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <div className="text-center">
+                                      <p className="text-white text-xs mb-1">
+                                        {getPlatformLabel(image.platform)}
+                                      </p>
+                                      <p className="text-white/80 text-xs">
+                                        {formatDate(image.created_at)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="w-full h-full bg-white/10 flex items-center justify-center">
+                                  <ImageIcon className="w-8 h-8 text-white/40" />
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(session.status)}`}>
-                          {session.status}
-                        </span>
-                        <div className="text-right">
-                          <p className="text-white font-medium">
-                            {session.generated_images?.length || 0}
-                          </p>
-                          <p className="text-white/60 text-xs">images</p>
-                        </div>
-                      </div>
+                            
+                            {/* Image info */}
+                            <div className="p-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-white/80 text-xs truncate flex-1">
+                                  {image.metadata?.product_name || 'Product'}
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    downloadImage(image)
+                                  }}
+                                  className="text-white/60 hover:text-white transition-colors p-1"
+                                  title="Download"
+                                >
+                                  <Download className="w-3 h-3" />
+                                </button>
+                              </div>
+                              <p className="text-white/50 text-xs">
+                                {image.metadata?.prompt_type?.replace('style_', 'Style ') || 'Generated'}
+                              </p>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
-
-                  {/* Expanded Session Content */}
-                  {selectedSession === session.id && session.generated_images && session.generated_images.length > 0 && (
-                    <div className="px-6 pb-6 border-t border-white/10">
-                      <div className="pt-6">
-                        <h4 className="text-white font-medium mb-4">Generated Images</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {session.generated_images.map((image) => {
-                            const imageSrc = getImageSrc(image)
-                            
-                            return (
-                              <div key={image.id} className="bg-white/5 rounded-lg overflow-hidden group hover:bg-white/10 transition">
-                                <div className="aspect-square relative">
-                                  {imageSrc ? (
-                                    <>
-                                      <img
-                                        src={imageSrc}
-                                        alt={image.filename}
-                                        className="w-full h-full object-cover"
-                                        onError={() => handleImageError(image.id)}
-                                      />
-                                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            setViewingImage(image)
-                                          }}
-                                          className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition"
-                                          title="View full size"
-                                        >
-                                          <Eye className="w-5 h-5 text-white" />
-                                        </button>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            downloadImage(image)
-                                          }}
-                                          className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition"
-                                          title="Download image"
-                                        >
-                                          <Download className="w-5 h-5 text-white" />
-                                        </button>
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <div className="w-full h-full bg-white/10 flex flex-col items-center justify-center">
-                                      <ImageIcon className="w-12 h-12 text-white/40 mb-2" />
-                                      <p className="text-white/40 text-xs text-center">Image not available</p>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="p-3">
-                                  <p className="text-white/80 text-sm line-clamp-2 mb-2">
-                                    {image.prompt_text || 'No prompt available'}
-                                  </p>
-                                  <div className="flex items-center justify-between text-white/60 text-xs">
-                                    <span>{image.platform} • {image.size}</span>
-                                    {image.metadata?.product_name && (
-                                      <span className="bg-white/10 px-2 py-1 rounded">
-                                        {image.metadata.product_name}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
             </div>
           )}
         </div>
       </div>
 
       {/* Image Viewer Modal */}
-      {viewingImage && (
+      {selectedImage && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="relative max-w-4xl max-h-[90vh] w-full">
             <button
-              onClick={() => setViewingImage(null)}
-              className="absolute -top-12 right-0 bg-white/20 hover:bg-white/30 p-2 rounded-lg transition z-10"
+              onClick={() => setSelectedImage(null)}
+              className="absolute -top-12 right-0 bg-white/20 hover:bg-white/30 p-2 rounded-lg transition z-10 text-white"
             >
-              <X className="w-6 h-6 text-white" />
+              ✕
             </button>
             
             <div className="bg-white/10 backdrop-blur-md rounded-2xl overflow-hidden">
-              {getImageSrc(viewingImage) ? (
+              {getImageSrc(selectedImage) ? (
                 <img
-                  src={getImageSrc(viewingImage)!}
-                  alt={viewingImage.filename}
+                  src={getImageSrc(selectedImage)!}
+                  alt={selectedImage.filename}
                   className="w-full max-h-[70vh] object-contain"
                 />
               ) : (
                 <div className="w-full h-64 bg-white/10 flex items-center justify-center">
-                  <div className="text-center">
-                    <ImageIcon className="w-16 h-16 text-white/40 mx-auto mb-2" />
-                    <p className="text-white/60">Image not available</p>
-                  </div>
+                  <ImageIcon className="w-16 h-16 text-white/40" />
                 </div>
               )}
               
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
-                    <h3 className="text-white font-semibold mb-2">{viewingImage.filename}</h3>
-                    <p className="text-white/80 text-sm mb-2">
-                      {viewingImage.prompt_text || 'No prompt available'}
-                    </p>
-                    <div className="flex items-center gap-4 text-white/60 text-xs">
-                      <span>{viewingImage.platform} • {viewingImage.size}</span>
-                      <span>{formatDate(viewingImage.created_at)}</span>
-                      {viewingImage.metadata?.product_name && (
+                    <h3 className="text-white font-semibold mb-2">{selectedImage.filename}</h3>
+                    <div className="flex items-center gap-4 text-white/60 text-sm">
+                      <span>{getPlatformLabel(selectedImage.platform)} • {selectedImage.size}</span>
+                      <span>{formatDate(selectedImage.created_at)}</span>
+                      {selectedImage.metadata?.product_name && (
                         <span className="bg-white/10 px-2 py-1 rounded">
-                          {viewingImage.metadata.product_name}
+                          {selectedImage.metadata.product_name}
                         </span>
                       )}
                     </div>
                   </div>
                   <button
-                    onClick={() => downloadImage(viewingImage)}
+                    onClick={() => downloadImage(selectedImage)}
                     className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-4 py-2 rounded-lg transition flex items-center gap-2 ml-4"
                   >
                     <Download className="w-4 h-4" />

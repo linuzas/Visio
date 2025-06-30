@@ -1,12 +1,12 @@
 // File: visual-god-app/frontend/app/dashboard/dashboard-content.tsx
-// UPDATED VERSION - Removed duplicate navigation, cleaner component
+// FIXED VERSION - Improved image validation UX with loading states
 
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 interface GeneratedImage {
@@ -106,11 +106,13 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [processingStep, setProcessingStep] = useState('')
   const [cancelRequested, setCancelRequested] = useState(false)
   
-  // NEW: Image validation states
-  const [showValidation, setShowValidation] = useState(false)
+  // FIXED: Better image validation states
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([])
   const [validating, setValidating] = useState(false)
   const [canProceed, setCanProceed] = useState(false)
+  const [validationProgress, setValidationProgress] = useState(0)
+  const [showValidationDetails, setShowValidationDetails] = useState(false)
+  const [hasValidated, setHasValidated] = useState(false)
   
   const abortControllerRef = useRef<AbortController | null>(null)
   
@@ -119,9 +121,10 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
   const creditsRemaining = stats?.credits_remaining || 0
   const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
+  const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
   const requiredCredits = generateImages ? validProducts.length * 3 : 0
 
-  // Simple Dashboard Navigation - No complex navbar
+  // FIXED: Clean navigation component
   const DashboardNav = () => (
     <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -168,9 +171,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       </div>
     </div>
   )
-
-  // Rest of your existing component logic stays the same...
-  // (keeping all the existing functions: startLoadingMessages, cancelProcessing, handleDrag, etc.)
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -242,30 +242,41 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     if (newFiles.length > 0) {
       validateImages(newFiles)
     } else {
+      // FIXED: Reset all validation states when no files
       setValidationResults([])
       setCanProceed(false)
-      setShowValidation(false)
+      setShowValidationDetails(false)
+      setHasValidated(false)
+      setValidationProgress(0)
     }
   }
 
-  // Validate images function
+  // FIXED: Better validation with progress
   const validateImages = async (filesToValidate: File[] = files) => {
     if (filesToValidate.length === 0) {
       setValidationResults([])
       setCanProceed(false)
-      setShowValidation(false)
+      setShowValidationDetails(false)
+      setHasValidated(false)
+      setValidationProgress(0)
       return
     }
 
     setValidating(true)
-    setShowValidation(true)
+    setShowValidationDetails(true)
+    setHasValidated(false)
+    setValidationProgress(0)
 
     try {
-      const imagePromises = filesToValidate.map((file) => {
+      console.log(`🔍 Starting validation for ${filesToValidate.length} images...`)
+      
+      // FIXED: Show progress during image conversion
+      const imagePromises = filesToValidate.map((file, index) => {
         return new Promise<{ base64: string; filename: string }>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => {
             const base64 = e.target?.result as string
+            setValidationProgress(((index + 1) / filesToValidate.length) * 50) // First 50% for conversion
             resolve({
               base64: base64.split(',')[1],
               filename: file.name
@@ -276,6 +287,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       })
 
       const images = await Promise.all(imagePromises)
+      
+      setValidationProgress(60) // 60% when images are converted
 
       const response = await fetch('/api/validate', {
         method: 'POST',
@@ -285,22 +298,36 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         body: JSON.stringify({ images })
       })
 
+      setValidationProgress(90) // 90% when API responds
+
       const data = await response.json()
 
       if (data.success) {
         setValidationResults(data.validation_results || [])
         setCanProceed(data.can_proceed || false)
+        setValidationProgress(100) // 100% when complete
+        setHasValidated(true)
+        
+        console.log(`✅ Validation complete: ${data.validation_results?.length || 0} results`)
       } else {
         setValidationResults([])
         setCanProceed(false)
+        setValidationProgress(100)
+        setHasValidated(true)
+        console.error('❌ Validation failed:', data.error)
       }
 
     } catch (error) {
-      console.error('Validation error:', error)
+      console.error('❌ Validation error:', error)
       setValidationResults([])
       setCanProceed(false)
+      setValidationProgress(100)
+      setHasValidated(true)
     } finally {
-      setValidating(false)
+      // FIXED: Keep spinner for minimum duration for better UX
+      setTimeout(() => {
+        setValidating(false)
+      }, 800) // Minimum 800ms for smooth transition
     }
   }
 
@@ -411,51 +438,69 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setUploadProgress(0)
     setValidationResults([])
     setCanProceed(false)
-    setShowValidation(false)
+    setShowValidationDetails(false)
+    setHasValidated(false)
+    setValidationProgress(0)
     setCancelRequested(false)
   }
 
-  // Validation Results Component (keeping existing implementation)
+  // FIXED: Better validation results with improved colors and UX
   const ValidationResults = () => {
-    if (!showValidation || validationResults.length === 0) return null
-
-    const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
-    const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
+    if (!showValidationDetails && !validating) return null
 
     return (
-      <div className="mt-6 bg-white/10 rounded-xl p-6">
+      <div className="mt-6 bg-white/5 rounded-xl p-6 border border-white/10">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-white font-semibold text-lg flex items-center gap-2">
             <Eye className="w-5 h-5" />
-            Image Analysis Results
+            Image Analysis
+            {validating && (
+              <span className="text-sm font-normal text-white/60">
+                ({validationProgress}%)
+              </span>
+            )}
           </h3>
-          <button
-            onClick={() => setShowValidation(!showValidation)}
-            className="text-white/60 hover:text-white"
-          >
-            {showValidation ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+          {hasValidated && (
+            <button
+              onClick={() => setShowValidationDetails(!showValidationDetails)}
+              className="text-white/60 hover:text-white transition-colors p-1 rounded"
+              title={showValidationDetails ? 'Hide details' : 'Show details'}
+            >
+              {showValidationDetails ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          )}
         </div>
 
         {validating ? (
-          <div className="text-center py-4">
-            <Loader2 className="w-6 h-6 animate-spin text-white mx-auto mb-2" />
-            <p className="text-white/80">Analyzing images...</p>
+          <div className="space-y-4">
+            <div className="w-full bg-white/10 rounded-full h-2">
+              <div 
+                className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${validationProgress}%` }}
+              />
+            </div>
+            <div className="text-center py-4">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-400 mx-auto mb-2" />
+              <p className="text-white/80 text-sm">
+                {validationProgress < 50 ? 'Converting images...' : 
+                 validationProgress < 90 ? 'Analyzing with AI...' : 'Finishing up...'}
+              </p>
+            </div>
           </div>
-        ) : (
+        ) : hasValidated && showValidationDetails ? (
           <div className="space-y-4">
             {validProducts.length > 0 && (
               <div>
-                <h4 className="text-green-300 font-medium mb-2 flex items-center gap-2">
+                <h4 className="text-blue-300 font-medium mb-3 flex items-center gap-2">
                   <CheckCircle className="w-4 h-4" />
                   Valid Products ({validProducts.length})
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {validProducts.map((result, i) => (
-                    <div key={i} className="bg-green-500/20 border border-green-500/40 rounded-lg p-3">
-                      <p className="text-green-200 font-medium">{result.product_name || 'Product'}</p>
-                      <p className="text-green-300/80 text-sm">{result.description}</p>
-                      <p className="text-green-300/60 text-xs">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
+                    <div key={i} className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 hover:bg-blue-500/15 transition-colors">
+                      <p className="text-blue-200 font-medium">{result.product_name || 'Product'}</p>
+                      <p className="text-blue-300/80 text-sm">{result.description}</p>
+                      <p className="text-blue-300/60 text-xs">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
                     </div>
                   ))}
                 </div>
@@ -464,17 +509,17 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
             {rejectedImages.length > 0 && (
               <div>
-                <h4 className="text-red-300 font-medium mb-2 flex items-center gap-2">
+                <h4 className="text-orange-300 font-medium mb-3 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4" />
                   Rejected Images ({rejectedImages.length})
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {rejectedImages.map((result, i) => (
-                    <div key={i} className="bg-red-500/20 border border-red-500/40 rounded-lg p-3">
-                      <p className="text-red-200 font-medium">{result.category}</p>
-                      <p className="text-red-300/80 text-sm">{result.description}</p>
+                    <div key={i} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3 hover:bg-orange-500/15 transition-colors">
+                      <p className="text-orange-200 font-medium">{result.category}</p>
+                      <p className="text-orange-300/80 text-sm">{result.description}</p>
                       {result.rejection_reason && (
-                        <p className="text-red-300/60 text-xs">{result.rejection_reason}</p>
+                        <p className="text-orange-300/60 text-xs">{result.rejection_reason}</p>
                       )}
                     </div>
                   ))}
@@ -482,29 +527,46 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               </div>
             )}
 
-            <div className="mt-4 p-4 bg-white/5 rounded-lg">
+            <div className="mt-4 p-4 bg-white/5 rounded-lg border border-white/10">
               {canProceed ? (
                 <div className="flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-400" />
-                  <p className="text-green-300">
+                  <CheckCircle className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                  <p className="text-blue-300">
                     Ready to proceed! Found {validProducts.length} valid product{validProducts.length !== 1 ? 's' : ''}.
                   </p>
                 </div>
               ) : (
                 <div className="flex items-center gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-400" />
-                  <p className="text-red-300">
+                  <AlertCircle className="w-5 h-5 text-orange-400 flex-shrink-0" />
+                  <p className="text-orange-300">
                     Cannot proceed. Please upload at least one clear product image.
                   </p>
+                  <button
+                    onClick={() => validateImages()}
+                    className="ml-auto bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 px-3 py-1 rounded text-sm transition-colors flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Retry
+                  </button>
                 </div>
               )}
             </div>
           </div>
-        )}
+        ) : hasValidated ? (
+          <div className="text-center py-2">
+            <p className="text-white/60 text-sm">
+              {canProceed ? 
+                `✅ Analysis complete - ${validProducts.length} valid product${validProducts.length !== 1 ? 's' : ''} found` :
+                `⚠️ Analysis complete - No valid products found`
+              }
+            </p>
+          </div>
+        ) : null}
       </div>
     )
   }
 
+  // Rest of the component remains the same...
   if (result) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
@@ -859,7 +921,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
               )}
 
               {/* Cannot Proceed Warning */}
-              {!canProceed && files.length > 0 && (
+              {!canProceed && files.length > 0 && hasValidated && (
                 <div className="mt-4 bg-yellow-500/20 border border-yellow-500/40 rounded-lg p-4">
                   <p className="text-yellow-200 text-sm flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />

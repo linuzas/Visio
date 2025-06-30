@@ -1,4 +1,5 @@
 // File: visual-god-app/frontend/app/api/validate/route.ts
+// FIXED VERSION - Better error handling and timeout management
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase/server'
@@ -23,35 +24,129 @@ export async function POST(request: NextRequest) {
     if (!images || images.length === 0) {
       return NextResponse.json({
         success: false,
-        error: 'No images provided'
+        error: 'No images provided',
+        validation_results: [],
+        valid_products: [],
+        rejected_images: [],
+        can_proceed: false
       }, { status: 400 })
     }
-    
-    // Call your Railway backend validation endpoint
-    const response = await fetch(`${BACKEND_URL}/api/validate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        images,
-        userId: user.id
-      }),
-    })
 
-    if (!response.ok) {
-      throw new Error(`Backend error: ${response.status}`)
+    console.log(`🔍 Validating ${images.length} images for user ${user.id}`)
+    
+    // Call Railway backend validation endpoint with timeout
+    let response: Response
+    
+    try {
+      response = await fetch(`${BACKEND_URL}/api/validate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          images,
+          userId: user.id
+        }),
+        // Set shorter timeout for validation (30 seconds)
+        signal: AbortSignal.timeout(30000)
+      })
+    } catch (fetchError: any) {
+      console.error('Backend validation fetch error:', fetchError)
+      
+      if (fetchError.name === 'AbortError' || fetchError.message.includes('timeout')) {
+        return NextResponse.json({
+          success: false,
+          error: 'Validation timed out. Please try with fewer images.',
+          validation_results: [],
+          valid_products: [],
+          rejected_images: [],
+          can_proceed: false
+        }, { status: 408 })
+      }
+      
+      return NextResponse.json({
+        success: false,
+        error: 'Unable to connect to validation service. Please try again.',
+        validation_results: [],
+        valid_products: [],
+        rejected_images: [],
+        can_proceed: false
+      }, { status: 503 })
     }
 
-    const data = await response.json()
+    if (!response.ok) {
+      console.error(`Backend validation error: ${response.status}`)
+      
+      let errorMessage = 'Validation failed'
+      if (response.status === 413) {
+        errorMessage = 'Images are too large. Please use smaller images.'
+      } else if (response.status === 429) {
+        errorMessage = 'Too many requests. Please wait a moment and try again.'
+      } else if (response.status >= 500) {
+        errorMessage = 'Service temporarily unavailable. Please try again.'
+      }
+      
+      return NextResponse.json({
+        success: false,
+        error: errorMessage,
+        validation_results: [],
+        valid_products: [],
+        rejected_images: [],
+        can_proceed: false
+      }, { status: response.status })
+    }
+
+    let data: any
+    try {
+      data = await response.json()
+    } catch (parseError) {
+      console.error('Failed to parse validation response:', parseError)
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid response from validation service.',
+        validation_results: [],
+        valid_products: [],
+        rejected_images: [],
+        can_proceed: false
+      }, { status: 502 })
+    }
+
+    // Ensure proper response structure with proper typing
+    const validationResponse: {
+      success: boolean
+      validation_results: any[]
+      valid_products: any[]
+      rejected_images: any[]
+      can_proceed: boolean
+      message: string
+      error?: string
+    } = {
+      success: data.success || false,
+      validation_results: data.validation_results || [],
+      valid_products: data.valid_products || [],
+      rejected_images: data.rejected_images || [],
+      can_proceed: data.can_proceed || false,
+      message: data.message || (data.success ? 'Validation completed' : 'Validation failed')
+    }
+
+    // Safely add error if it exists
+    if (data.error) {
+      validationResponse.error = data.error
+    }
+
+    console.log(`✅ Validation completed: ${validationResponse.valid_products.length} valid, ${validationResponse.rejected_images.length} rejected`)
     
-    return NextResponse.json(data)
+    return NextResponse.json(validationResponse)
     
   } catch (error) {
-    console.error('Validation error:', error)
+    console.error('Validation API error:', error)
     return NextResponse.json({
       success: false,
-      error: error instanceof Error ? error.message : 'Validation failed'
+      error: 'Validation service error. Please try again.',
+      validation_results: [],
+      valid_products: [],
+      rejected_images: [],
+      can_proceed: false
     }, { status: 500 })
   }
 }
