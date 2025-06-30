@@ -1,11 +1,12 @@
 // File: visual-god-app/frontend/components/dashboard/history-content.tsx
-// OPTIMIZED VERSION - Simple gallery, faster loading, successful generations only
+// FIXED VERSION - Better image loading and mobile optimization
 
 'use client'
 
-import { useState } from 'react'
-import { Download, ImageIcon, Calendar, Sparkles, ArrowLeft } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Download, ImageIcon, Calendar, Sparkles, ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 interface GeneratedImage {
   id: string
@@ -19,6 +20,7 @@ interface GeneratedImage {
   }
   platform: string
   size: string
+  file_path?: string
 }
 
 interface OptimizedSession {
@@ -35,21 +37,99 @@ interface HistoryContentProps {
   user: any
 }
 
-export function HistoryContent({ sessions, images, user }: HistoryContentProps) {
+export function HistoryContent({ sessions, images: initialImages, user }: HistoryContentProps) {
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null)
+  const [images, setImages] = useState<GeneratedImage[]>(initialImages)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  
+  const supabase = createClient()
+
+  // Enhanced image loading with fallback to Supabase storage
+  const loadImages = async () => {
+    setLoading(true)
+    setError(null)
+    
+    try {
+      // Get fresh data from database with full metadata
+      const { data: freshImages, error: dbError } = await supabase
+        .from('generated_images')
+        .select(`
+          id,
+          filename,
+          created_at,
+          platform,
+          size,
+          file_path,
+          metadata
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50) // Limit for performance
+
+      if (dbError) throw dbError
+
+      // For each image, try to get the public URL if file_path exists
+      const imagesWithUrls = await Promise.all(
+        (freshImages || []).map(async (img) => {
+          let enhancedImg = { ...img }
+          
+          // Try to get public URL from storage if file_path exists
+          if (img.file_path) {
+            try {
+              const { data: urlData } = supabase.storage
+                .from('generated-images')
+                .getPublicUrl(img.file_path)
+              
+              if (urlData?.publicUrl) {
+                enhancedImg.metadata = {
+                  ...img.metadata,
+                  public_url: urlData.publicUrl
+                }
+              }
+            } catch (urlError) {
+              console.warn(`Failed to get URL for ${img.file_path}:`, urlError)
+            }
+          }
+          
+          return enhancedImg
+        })
+      )
+
+      setImages(imagesWithUrls)
+      console.log(`✅ Loaded ${imagesWithUrls.length} images with enhanced URLs`)
+      
+    } catch (err: any) {
+      console.error('❌ Failed to load images:', err)
+      setError('Failed to load recent images. Using cached data.')
+      // Keep existing images as fallback
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Load images on component mount
+  useEffect(() => {
+    if (user?.id) {
+      loadImages()
+    }
+  }, [user?.id])
 
   const downloadImage = (image: GeneratedImage) => {
     try {
       let imageUrl = ''
       let filename = image.filename || 'visual-god-image.jpg'
 
-      // Try different image sources
-      if (image.metadata?.base64) {
-        imageUrl = `data:image/jpeg;base64,${image.metadata.base64}`
-      } else if (image.metadata?.public_url) {
+      // Try different image sources in order of preference
+      if (image.metadata?.public_url) {
+        // Try public URL first
         imageUrl = image.metadata.public_url
+      } else if (image.metadata?.base64) {
+        // Fallback to base64
+        imageUrl = `data:image/jpeg;base64,${image.metadata.base64}`
       } else {
-        console.error('No image data available')
+        console.error('No image data available for download')
+        alert('Image not available for download. Please try refreshing the page.')
         return
       }
 
@@ -57,20 +137,26 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
       const link = document.createElement('a')
       link.href = imageUrl
       link.download = filename
+      link.target = '_blank' // Open in new tab for URLs
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      
+      console.log(`✅ Downloaded: ${filename}`)
     } catch (error) {
-      console.error('Download failed:', error)
+      console.error('❌ Download failed:', error)
       alert('Failed to download image. Please try again.')
     }
   }
 
   const getImageSrc = (image: GeneratedImage): string | null => {
+    // Try public URL first (most reliable)
+    if (image.metadata?.public_url) {
+      return image.metadata.public_url
+    }
+    // Fallback to base64 if available
     if (image.metadata?.base64) {
       return `data:image/jpeg;base64,${image.metadata.base64}`
-    } else if (image.metadata?.public_url) {
-      return image.metadata.public_url
     }
     return null
   }
@@ -134,29 +220,47 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
                 <p className="text-white/60 text-sm">{totalImages} images created</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-white/60 text-sm">
-              <Sparkles className="w-4 h-4" />
-              <span>{totalCreditsUsed} credits used</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadImages}
+                disabled={loading}
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-2 rounded-xl transition text-sm"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <div className="text-white/60 text-sm flex items-center gap-1">
+                <Sparkles className="w-4 h-4" />
+                <span>{totalCreditsUsed} credits used</span>
+              </div>
             </div>
           </div>
         </div>
 
         <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
+          {/* Error Message */}
+          {error && (
+            <div className="mb-6 bg-orange-500/20 border border-orange-400/30 rounded-lg p-4 flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-orange-300" />
+              <p className="text-orange-200">{error}</p>
+            </div>
+          )}
+
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-white/10 rounded-xl p-4 text-center">
+            <div className="bg-white/10 rounded-xl p-4 text-center hover:bg-white/15 transition">
               <p className="text-2xl font-bold text-white">{totalImages}</p>
               <p className="text-white/60 text-sm">Total Images</p>
             </div>
-            <div className="bg-white/10 rounded-xl p-4 text-center">
+            <div className="bg-white/10 rounded-xl p-4 text-center hover:bg-white/15 transition">
               <p className="text-2xl font-bold text-white">{sessions.length}</p>
               <p className="text-white/60 text-sm">Sessions</p>
             </div>
-            <div className="bg-white/10 rounded-xl p-4 text-center">
+            <div className="bg-white/10 rounded-xl p-4 text-center hover:bg-white/15 transition">
               <p className="text-2xl font-bold text-white">{totalCreditsUsed}</p>
               <p className="text-white/60 text-sm">Credits Used</p>
             </div>
-            <div className="bg-white/10 rounded-xl p-4 text-center">
+            <div className="bg-white/10 rounded-xl p-4 text-center hover:bg-white/15 transition">
               <p className="text-2xl font-bold text-white">
                 {Object.keys(imagesByDate).length}
               </p>
@@ -164,8 +268,16 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
             </div>
           </div>
 
+          {/* Loading State */}
+          {loading && (
+            <div className="text-center py-8">
+              <RefreshCw className="w-8 h-8 text-white/60 mx-auto mb-4 animate-spin" />
+              <p className="text-white/60">Loading recent images...</p>
+            </div>
+          )}
+
           {/* Image Gallery */}
-          {totalImages === 0 ? (
+          {!loading && totalImages === 0 ? (
             <div className="text-center py-12">
               <ImageIcon className="w-16 h-16 text-white/40 mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-white mb-2">No images yet</h3>
@@ -215,7 +327,20 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
                                     alt={image.filename}
                                     className="w-full h-full object-cover"
                                     loading="lazy"
+                                    onError={(e) => {
+                                      console.error(`Failed to load image: ${image.filename}`)
+                                      e.currentTarget.style.display = 'none'
+                                      e.currentTarget.nextElementSibling?.classList.remove('hidden')
+                                    }}
                                   />
+                                  {/* Fallback placeholder */}
+                                  <div className="hidden absolute inset-0 bg-white/10 flex items-center justify-center">
+                                    <div className="text-center">
+                                      <ImageIcon className="w-8 h-8 text-white/40 mx-auto mb-2" />
+                                      <p className="text-white/60 text-xs">Image unavailable</p>
+                                    </div>
+                                  </div>
+                                  
                                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                     <div className="text-center">
                                       <p className="text-white text-xs mb-1">
@@ -229,7 +354,10 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
                                 </>
                               ) : (
                                 <div className="w-full h-full bg-white/10 flex items-center justify-center">
-                                  <ImageIcon className="w-8 h-8 text-white/40" />
+                                  <div className="text-center">
+                                    <ImageIcon className="w-8 h-8 text-white/40 mx-auto mb-2" />
+                                    <p className="text-white/60 text-xs">No preview</p>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -266,7 +394,7 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
         </div>
       </div>
 
-      {/* Image Viewer Modal */}
+      {/* Enhanced Image Viewer Modal */}
       {selectedImage && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="relative max-w-4xl max-h-[90vh] w-full">
@@ -286,7 +414,10 @@ export function HistoryContent({ sessions, images, user }: HistoryContentProps) 
                 />
               ) : (
                 <div className="w-full h-64 bg-white/10 flex items-center justify-center">
-                  <ImageIcon className="w-16 h-16 text-white/40" />
+                  <div className="text-center">
+                    <ImageIcon className="w-16 h-16 text-white/40 mx-auto mb-4" />
+                    <p className="text-white/60">Image not available</p>
+                  </div>
                 </div>
               )}
               

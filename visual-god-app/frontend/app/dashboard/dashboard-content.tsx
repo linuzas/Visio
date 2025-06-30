@@ -1,12 +1,12 @@
 // File: visual-god-app/frontend/app/dashboard/dashboard-content.tsx
-// FIXED VERSION - Improved image validation UX with loading states
+// COMPLETE VERSION - All functions included
 
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, Loader2, Download, AlertCircle, Sparkles, Image as ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { Upload, Loader2, Download, AlertCircle, Sparkles, ImageIcon, Wand2, Instagram, Facebook, MonitorPlay, CreditCard, BarChart3, Clock, CheckCircle, X, Package, User, Settings, StopCircle, Home, History, ArrowLeft, Eye, EyeOff, RefreshCw, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 
 interface GeneratedImage {
@@ -79,7 +79,6 @@ const IMAGE_SIZES = {
   }
 }
 
-// Fun loading messages
 const LOADING_MESSAGES = [
   "🎨 Analyzing your products with AI vision...",
   "🔍 Detecting product features and details...",
@@ -106,7 +105,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [processingStep, setProcessingStep] = useState('')
   const [cancelRequested, setCancelRequested] = useState(false)
   
-  // FIXED: Better image validation states
   const [validationResults, setValidationResults] = useState<ValidationResult[]>([])
   const [validating, setValidating] = useState(false)
   const [canProceed, setCanProceed] = useState(false)
@@ -115,6 +113,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [hasValidated, setHasValidated] = useState(false)
   
   const abortControllerRef = useRef<AbortController | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   
   const router = useRouter()
   const supabase = createClient()
@@ -123,54 +122,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
   const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
   const requiredCredits = generateImages ? validProducts.length * 3 : 0
-
-  // FIXED: Clean navigation component
-  const DashboardNav = () => (
-    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white mb-1 flex items-center gap-2">
-            <Sparkles className="w-8 h-8" />
-            Welcome back, {profile?.full_name || profile?.username || 'Creator'}!
-          </h1>
-          <p className="text-white/80">Create amazing content with AI</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/dashboard/history"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <History className="w-4 h-4" />
-            History
-          </Link>
-          <Link
-            href="/dashboard/stats"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <BarChart3 className="w-4 h-4" />
-            Stats
-          </Link>
-          <Link
-            href="/profile"
-            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <User className="w-4 h-4" />
-            Profile
-          </Link>
-          <button
-            onClick={async () => {
-              await supabase.auth.signOut()
-              router.push('/')
-            }}
-            className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Sign Out
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -239,10 +190,15 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     const newFiles = files.filter((_, i) => i !== index)
     setFiles(newFiles)
     
+    // Reset file input value to allow re-uploading same file
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    
     if (newFiles.length > 0) {
       validateImages(newFiles)
     } else {
-      // FIXED: Reset all validation states when no files
+      // Reset all validation states when no files
       setValidationResults([])
       setCanProceed(false)
       setShowValidationDetails(false)
@@ -251,7 +207,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     }
   }
 
-  // FIXED: Better validation with progress
+  // Validation function
   const validateImages = async (filesToValidate: File[] = files) => {
     if (filesToValidate.length === 0) {
       setValidationResults([])
@@ -270,7 +226,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     try {
       console.log(`🔍 Starting validation for ${filesToValidate.length} images...`)
       
-      // FIXED: Show progress during image conversion
+      // Show progress during image conversion
       const imagePromises = filesToValidate.map((file, index) => {
         return new Promise<{ base64: string; filename: string }>((resolve) => {
           const reader = new FileReader()
@@ -324,7 +280,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       setValidationProgress(100)
       setHasValidated(true)
     } finally {
-      // FIXED: Keep spinner for minimum duration for better UX
+      // Keep spinner for minimum duration for better UX
       setTimeout(() => {
         setValidating(false)
       }, 800) // Minimum 800ms for smooth transition
@@ -393,7 +349,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           images,
           userId: profile.id,
           generate_images: generateImages,
-          image_size: selectedSize
+          image_size: selectedSize,
+          sessionId: `session_${Date.now()}`
         }),
         signal: abortControllerRef.current.signal
       })
@@ -442,9 +399,107 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     setHasValidated(false)
     setValidationProgress(0)
     setCancelRequested(false)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
   }
 
-  // FIXED: Better validation results with improved colors and UX
+  // Navigation component
+  const DashboardNav = () => (
+    <div className="bg-white/10 backdrop-blur-md rounded-3xl p-4 md:p-6 mb-8 shadow-2xl border border-white/20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-white mb-1 flex items-center gap-2">
+            <Sparkles className="w-8 h-8" />
+            Welcome back, {profile?.full_name || profile?.username || 'Creator'}!
+          </h1>
+          <p className="text-white/80">Create amazing content with AI</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/dashboard/preferences"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+          >
+            <Settings className="w-4 h-4" />
+            Preferences
+          </Link>
+          <Link
+            href="/dashboard/history"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+          >
+            <History className="w-4 h-4" />
+            History
+          </Link>
+          <Link
+            href="/dashboard/stats"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Stats
+          </Link>
+          <Link
+            href="/profile"
+            className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+          >
+            <User className="w-4 h-4" />
+            Profile
+          </Link>
+          <button
+            onClick={async () => {
+              await supabase.auth.signOut()
+              router.push('/')
+            }}
+            className="flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-3 md:px-4 py-2 rounded-xl transition-all duration-200 transform hover:scale-105 text-sm md:text-base"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Sign Out
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  // File list component
+  const FileList = () => {
+    if (files.length === 0) return null
+
+    return (
+      <div className="mt-6 space-y-3">
+        <h3 className="text-white font-medium text-sm">Uploaded Files ({files.length})</h3>
+        {files.map((file, i) => (
+          <div 
+            key={`${file.name}-${i}`} 
+            className="bg-white/10 rounded-lg p-4 flex items-center justify-between group hover:bg-white/15 transition-all duration-200"
+          >
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <ImageIcon className="w-5 h-5 text-white/60 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="text-white text-sm truncate block">{file.name}</span>
+                <span className="text-white/40 text-xs">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </span>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => removeFile(i)}
+              onTouchEnd={(e) => {
+                e.preventDefault()
+                removeFile(i)
+              }}
+              className="bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-200 p-2 rounded-lg transition-all duration-200 transform hover:scale-110 active:scale-95 ml-3 flex-shrink-0 touch-manipulation"
+              style={{ touchAction: 'manipulation' }}
+              aria-label={`Remove ${file.name}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  // Validation results component
   const ValidationResults = () => {
     if (!showValidationDetails && !validating) return null
 
@@ -566,7 +621,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     )
   }
 
-  // Rest of the component remains the same...
+  // If result exists, show results page
   if (result) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400 p-4 md:p-8">
@@ -574,7 +629,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           <DashboardNav />
           
           <div className="bg-white/10 backdrop-blur-md rounded-3xl p-6 md:p-8 shadow-2xl">
-            {/* Results content - keeping existing implementation */}
             <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
               <h1 className="text-3xl md:text-4xl font-bold text-white flex items-center gap-3">
                 <Sparkles className="w-8 h-8 md:w-10 md:h-10" />
@@ -807,6 +861,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
             <label className="bg-white/20 hover:bg-white/30 text-white font-semibold py-2 px-4 md:px-6 rounded-xl cursor-pointer transition-all duration-200 inline-block transform hover:scale-105">
               Browse Files
               <input
+                ref={fileInputRef}
                 type="file"
                 multiple
                 accept="image/*"
@@ -820,25 +875,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
           </div>
 
           {/* File List */}
-          {files.length > 0 && (
-            <div className="mt-6 space-y-2">
-              {files.map((file, i) => (
-                <div key={i} className="bg-white/10 rounded-lg p-3 flex items-center justify-between group hover:bg-white/15 transition-all duration-200">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <ImageIcon className="w-5 h-5 text-white/60 flex-shrink-0" />
-                    <span className="text-white text-sm truncate flex-1">{file.name}</span>
-                    <span className="text-white/40 text-xs flex-shrink-0">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
-                  </div>
-                  <button
-                    onClick={() => removeFile(i)}
-                    className="text-white/40 hover:text-white ml-2 opacity-0 group-hover:opacity-100 transition-all duration-200 transform hover:scale-110 flex-shrink-0"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <FileList />
 
           {/* Validation Results */}
           <ValidationResults />
