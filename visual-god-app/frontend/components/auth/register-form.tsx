@@ -1,3 +1,6 @@
+// File: visual-god-app/frontend/components/auth/register-form.tsx
+// UPDATED VERSION - Fixed email redirect URL
+
 'use client'
 
 import { useState } from 'react'
@@ -22,6 +25,20 @@ export function RegisterForm() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
+  }
+
+  const getRedirectURL = () => {
+    // Get the base URL for the current environment
+    let url = process.env.NEXT_PUBLIC_VERCEL_URL ?? 'http://localhost:3000'
+    
+    // Make sure to include `https://` when not localhost
+    url = url.startsWith('http') ? url : `https://${url}`
+    
+    // Make sure to include a trailing `/`
+    url = url.endsWith('/') ? url : `${url}/`
+    
+    // Add the confirmation route
+    return `${url}auth/confirm`
   }
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -52,7 +69,7 @@ export function RegisterForm() {
             username: formData.username,
             full_name: formData.fullName,
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: getRedirectURL(),
         },
       })
 
@@ -60,6 +77,7 @@ export function RegisterForm() {
 
       setSuccess(true)
     } catch (error: any) {
+      console.error('Registration error:', error)
       setError(error.message)
     } finally {
       setLoading(false)
@@ -73,15 +91,28 @@ export function RegisterForm() {
           <CheckCircle className="w-8 h-8 text-green-400" />
         </div>
         <h3 className="text-xl font-semibold text-white">Check your email!</h3>
-        <p className="text-white/80">
-          We've sent you a confirmation link. Please check your email to verify your account.
-        </p>
-        <Link
-          href="/auth/login"
-          className="inline-block text-white font-semibold hover:text-pink-200 underline underline-offset-2"
-        >
-          Back to login
-        </Link>
+        <div className="text-white/80 space-y-2">
+          <p>
+            We've sent a confirmation link to <strong>{formData.email}</strong>
+          </p>
+          <p>
+            Please check your email and click the confirmation link to verify your account.
+          </p>
+          <p className="text-sm text-white/60">
+            If you don't see the email, check your spam folder.
+          </p>
+        </div>
+        <div className="space-y-2 pt-4">
+          <Link
+            href="/auth/login"
+            className="inline-block text-white font-semibold hover:text-pink-200 underline underline-offset-2"
+          >
+            Back to login
+          </Link>
+          <p className="text-white/60 text-xs">
+            Already confirmed? Sign in above
+          </p>
+        </div>
       </div>
     )
   }

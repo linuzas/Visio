@@ -1,4 +1,5 @@
 # File: visual-god-app/backend/app/services/content_agent_helper.py
+# FIXED VERSION - Better error handling for OpenAI API 500 errors
 
 import os
 import base64
@@ -14,6 +15,12 @@ import uuid
 import httpx
 from PIL import Image
 import io
+import time
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 🎯 SIZE MAPPING for your requirements
 SIZE_MAPPING = {
@@ -34,19 +41,32 @@ class AgentState(TypedDict):
     generate_images_flag: Optional[bool]
     image_data_list: Optional[List[dict]]
     image_size: Optional[str]
-    validation_results: Optional[List[dict]]  # NEW: Store validation results
+    validation_results: Optional[List[dict]]
 
 # === UTILS ===
 def get_llm():
     return ChatOpenAI(temperature=0.7, model="gpt-4o")
 
 def get_openai_client():
-    """Create OpenAI client with extended timeout for Railway deployment"""
+    """Create OpenAI client with better error handling and retry logic"""
     return OpenAI(
         api_key=os.environ.get('OPENAI_API_KEY'),
-        timeout=180.0,
-        max_retries=1
+        timeout=120.0,  # Reduced timeout
+        max_retries=2   # Reduced retries to avoid long waits
     )
+
+def retry_with_backoff(func, max_retries=3, base_delay=1):
+    """Retry function with exponential backoff"""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            
+            delay = base_delay * (2 ** attempt)
+            logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+            time.sleep(delay)
 
 def resize_image_to_target(image_base64: str, target_size: str) -> str:
     """Resize image to target dimensions while maintaining quality"""
@@ -56,35 +76,42 @@ def resize_image_to_target(image_base64: str, target_size: str) -> str:
         image = Image.open(io.BytesIO(image_data))
         if image.mode != 'RGB':
             image = image.convert('RGB')
+        
+        # Calculate aspect ratios
         original_ratio = image.width / image.height
         target_ratio = width / height
 
         if original_ratio > target_ratio:
+            # Image is wider than target
             new_height = height
             new_width = int(height * original_ratio)
             image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
             left = (new_width - width) // 2
             image = image.crop((left, 0, left + width, height))
         else:
+            # Image is taller than target
             new_width = width
             new_height = int(width / original_ratio)
             image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
             top = (new_height - height) // 2
             image = image.crop((0, top, width, top + height))
 
+        # Final resize to exact dimensions
         image = image.resize((width, height), Image.Resampling.LANCZOS)
+        
+        # Save with high quality
         buffer = io.BytesIO()
         image.save(buffer, format='JPEG', quality=95, optimize=True)
         return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     except Exception as e:
-        print(f"❌ Error resizing image: {e}")
+        logger.error(f"❌ Error resizing image: {e}")
         return image_base64
 
-# === NEW: VALIDATE AND CATEGORIZE IMAGES ===
+# === VALIDATION AND CATEGORIZATION ===
 def validate_and_categorize_images(state: AgentState) -> AgentState:
     """Validate and categorize uploaded images before processing"""
-    print("🔄 Executing validate_and_categorize_images…")
+    logger.info("🔄 Executing validate_and_categorize_images…")
     image_data_list = state.get("image_data_list", [])
     
     if not image_data_list:
@@ -101,19 +128,21 @@ def validate_and_categorize_images(state: AgentState) -> AgentState:
     validation_results = []
 
     try:
-        print(f"   Validating and categorizing {len(image_data_list)} images…")
+        logger.info(f"   Validating and categorizing {len(image_data_list)} images…")
         
         for i, img_data in enumerate(image_data_list):
-            print(f"   Processing image {i+1}/{len(image_data_list)}…")
+            logger.info(f"   Processing image {i+1}/{len(image_data_list)}…")
             
-            # Enhanced validation prompt
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                temperature=0,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": """
+            def validate_single_image():
+                # Enhanced validation prompt
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    temperature=0,
+                    max_tokens=500,  # Limit response size
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": """
 Analyze this image and provide a JSON response with the following structure:
 {
     "is_product": true/false,
@@ -127,13 +156,17 @@ Analyze this image and provide a JSON response with the following structure:
 
 Only accept clear photos of physical products (food, cosmetics, electronics, clothing, etc.). 
 Reject people, avatars, scenes, text screenshots, or unclear images.
-                        """},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
-                    ]
-                }]
-            )
+                            """},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data['base64']}"}}
+                        ]
+                    }]
+                )
+                return response
             
             try:
+                # Use retry logic for validation
+                response = retry_with_backoff(validate_single_image, max_retries=2, base_delay=1)
+                
                 content = response.choices[0].message.content.strip()
                 start = content.find("{")
                 end = content.rfind("}") + 1
@@ -145,10 +178,10 @@ Reject people, avatars, scenes, text screenshots, or unclear images.
                 
                 validation_results.append(validation_data)
                 
-                print(f"   ✅ Image {i+1} analyzed: {validation_data['category']} - {validation_data['description'][:50]}...")
+                logger.info(f"   ✅ Image {i+1} analyzed: {validation_data['category']} - {validation_data['description'][:50]}...")
                 
             except Exception as e:
-                print(f"   ❌ Failed to parse validation for image {i+1}: {e}")
+                logger.error(f"   ❌ Failed to parse validation for image {i+1}: {e}")
                 validation_results.append({
                     "is_product": False,
                     "category": "error",
@@ -156,12 +189,12 @@ Reject people, avatars, scenes, text screenshots, or unclear images.
                     "description": "Failed to analyze image",
                     "product_name": None,
                     "product_type": None,
-                    "rejection_reason": "Analysis failed",
+                    "rejection_reason": f"Analysis failed: {str(e)}",
                     "original_image": img_data,
                     "index": i
                 })
 
-        print(f"✅ Validation complete: {len(validation_results)} images analyzed")
+        logger.info(f"✅ Validation complete: {len(validation_results)} images analyzed")
         
         return {
             **state,
@@ -173,7 +206,7 @@ Reject people, avatars, scenes, text screenshots, or unclear images.
         }
 
     except Exception as e:
-        print(f"   OpenAI API error: {e}")
+        logger.error(f"   OpenAI API error during validation: {e}")
         return {
             **state,
             "current_step": "validation_failed",
@@ -186,7 +219,7 @@ Reject people, avatars, scenes, text screenshots, or unclear images.
 # === FILTER VALID PRODUCTS ===
 def filter_valid_products(state: AgentState) -> AgentState:
     """Filter and prepare valid products for processing"""
-    print("🔄 Executing filter_valid_products…")
+    logger.info("🔄 Executing filter_valid_products…")
     validation_results = state.get("validation_results", [])
     
     if not validation_results:
@@ -205,7 +238,7 @@ def filter_valid_products(state: AgentState) -> AgentState:
     ]
     
     if not valid_products:
-        print("   ❌ No valid products found")
+        logger.info("   ❌ No valid products found")
         return {
             **state,
             "current_step": "no_valid_products",
@@ -228,7 +261,7 @@ def filter_valid_products(state: AgentState) -> AgentState:
         products_scanned.append(product_data)
         valid_image_data.append(result["original_image"])
 
-    print(f"✅ Filtered products: {len(valid_products)} valid products found")
+    logger.info(f"✅ Filtered products: {len(valid_products)} valid products found")
     
     return {
         **state,
@@ -243,7 +276,7 @@ def filter_valid_products(state: AgentState) -> AgentState:
 # === GENERATE SPECIFIC PROMPTS FOR EACH PRODUCT ===
 def generate_specific_prompts(state: AgentState) -> AgentState:
     """Generate 3 specific marketing prompts for each product"""
-    print("🔄 Executing generate_specific_prompts…")
+    logger.info("🔄 Executing generate_specific_prompts…")
     products = state.get("products_scanned", [])
     if not products:
         return {
@@ -257,6 +290,7 @@ def generate_specific_prompts(state: AgentState) -> AgentState:
     all_prompts: List[str] = []
     all_prompt_image_pairs: List[dict] = []
 
+    # Updated prompt templates with better descriptions
     prompt_templates = [
         "A surreal, bird's-eye view of a city street pedestrian crossing, filled with tiny, realistic people walking in various directions. In the center of the crosswalk lies a giant {product_name}, replacing the crosswalk stripes or interacting with them as if it's part of the scene. The perspective should make the product look enormous in comparison to the people. The style should be ultra-realistic with slight artistic exaggeration, with good lighting and detailed shadows cast by the product and people, similar to a high-end street photography shot.",
         "A hyper-realistic nighttime city intersection with a massive, curved 3D digital billboard on the side of a modern building. The billboard displays a dynamic 3D advertisement of a floating {product_name}, emerging slightly out of the screen as if it's interacting with the real world. The product is well-lit with cinematic lighting, surrounded by subtle particles and visual effects that emphasize the product's key features. Pedestrians below are watching or walking by, giving a sense of scale and realism. The overall atmosphere is futuristic, premium, and similar to Times Square or Piccadilly Circus LED displays.",
@@ -266,7 +300,7 @@ def generate_specific_prompts(state: AgentState) -> AgentState:
     for product in products:
         product_name = product.get("product_name", "the product")
         original_image = product.get("original_image")
-        print(f"   Generating 3 prompts for: {product_name}")
+        logger.info(f"   Generating 3 prompts for: {product_name}")
         for idx, template in enumerate(prompt_templates):
             prompt = template.format(product_name=product_name)
             all_prompts.append(prompt)
@@ -278,7 +312,7 @@ def generate_specific_prompts(state: AgentState) -> AgentState:
                 "prompt_index": idx
             })
 
-    print(f"✅ Generated {len(all_prompt_image_pairs)} prompts for {len(products)} product(s)")
+    logger.info(f"✅ Generated {len(all_prompt_image_pairs)} prompts for {len(products)} product(s)")
     return {
         **state,
         "edit_prompts": all_prompts,
@@ -291,11 +325,11 @@ def generate_specific_prompts(state: AgentState) -> AgentState:
 
 # === GENERATE IMAGES WITH GPT-IMAGE-1 ===
 def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
-    """Generate images using GPT-Image-1 with smaller file sizes"""
-    print("🎨 Executing GPT-Image-1 generation for all products...")
+    """Generate images using GPT-Image-1 with better error handling and retry logic"""
+    logger.info("🎨 Executing GPT-Image-1 generation for all products...")
     generate_flag = state.get("generate_images_flag", True)
     if not generate_flag:
-        print("   Image generation disabled, skipping...")
+        logger.info("   Image generation disabled, skipping...")
         return {
             **state,
             "current_step": "image_generation_skipped",
@@ -308,9 +342,9 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
     image_size = state.get("image_size", "instagram")
     target_size = SIZE_MAPPING.get(image_size, "1080x1920")
 
-    print(f"📦 Found {len(prompt_image_pairs)} prompt-image pairs, target size: {target_size}")
+    logger.info(f"📦 Found {len(prompt_image_pairs)} prompt-image pairs, target size: {target_size}")
     if not prompt_image_pairs:
-        print("⚠️ No prompt_image_pairs found in state!")
+        logger.warning("⚠️ No prompt_image_pairs found in state!")
         return {
             **state,
             "current_step": "image_generation_skipped",
@@ -330,21 +364,21 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
         prompt_type = pair.get("prompt_type", f"style_{idx}")
 
         if not image_data_list:
-            print(f"   No images available for prompt {idx+1}")
+            logger.warning(f"   No images available for prompt {idx+1}")
             continue
 
         try:
-            print(f"🔁 Generating image {idx+1}/{len(prompt_image_pairs)} for {product_name} ({prompt_type})")
+            logger.info(f"🔁 Generating image {idx+1}/{len(prompt_image_pairs)} for {product_name} ({prompt_type})")
             input_image_data = image_data_list[0]
             image_bytes = base64.b64decode(input_image_data['base64'])
 
-            # Compress image before sending to reduce 413 errors
+            # Compress and optimize image before sending
             image = Image.open(io.BytesIO(image_bytes))
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Resize if too large (max 4MB for OpenAI)
-            max_size = 1024  # Reduce max dimension
+            # Resize to manageable size (max 1024px for OpenAI API)
+            max_size = 1024
             if max(image.width, image.height) > max_size:
                 ratio = max_size / max(image.width, image.height)
                 new_width = int(image.width * ratio)
@@ -353,28 +387,35 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
 
             # Save compressed image
             buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=85, optimize=True)  # Reduced quality
+            image.save(buffer, format='JPEG', quality=85, optimize=True)
             compressed_bytes = buffer.getvalue()
             
-            print(f"   Original size: {len(image_bytes)} bytes, Compressed: {len(compressed_bytes)} bytes")
+            logger.info(f"   Original size: {len(image_bytes)} bytes, Compressed: {len(compressed_bytes)} bytes")
 
+            # Create temporary file for OpenAI API
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
                 temp_file.write(compressed_bytes)
                 temp_file_path = temp_file.name
 
             try:
-                enhanced_prompt = f"{prompt} High quality, professional photography, ultra-detailed, cinematic."
-                with open(temp_file_path, 'rb') as image_file:
-                    result = client.images.edit(
-                        model="gpt-image-1",
-                        image=image_file,
-                        prompt=enhanced_prompt,
-                        size="1024x1024",
-                        n=1
-                    )
+                # Define the generation function for retry logic
+                def generate_single_image():
+                    enhanced_prompt = f"{prompt} High quality, professional photography, ultra-detailed, cinematic lighting."
+                    with open(temp_file_path, 'rb') as image_file:
+                        response = client.images.edit(
+                            model="gpt-image-1",
+                            image=image_file,
+                            prompt=enhanced_prompt,
+                            size="1024x1024",
+                            n=1
+                        )
+                    return response
 
+                # Use retry logic for image generation
+                result = retry_with_backoff(generate_single_image, max_retries=3, base_delay=2)
+                
                 generated_base64 = result.data[0].b64_json
-                print(f"🔧 Resizing from 1024x1024 to {target_size}")
+                logger.info(f"🔧 Resizing from 1024x1024 to {target_size}")
                 resized_base64 = resize_image_to_target(generated_base64, target_size)
 
                 generated_images.append({
@@ -387,9 +428,18 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
                     "product_name": product_name,
                     "prompt_type": prompt_type
                 })
-                print(f"✅ Generated and resized image {idx+1} for {product_name} ({prompt_type})")
+                logger.info(f"✅ Generated and resized image {idx+1} for {product_name} ({prompt_type})")
 
+            except Exception as api_error:
+                error_msg = f"❌ OpenAI API error for image {idx+1} ({product_name}): {api_error}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                
+                # Continue with next image instead of failing completely
+                continue
+                
             finally:
+                # Clean up temporary file
                 try:
                     os.unlink(temp_file_path)
                 except:
@@ -397,25 +447,33 @@ def generate_images_with_gpt_image_1(state: AgentState) -> AgentState:
 
         except Exception as e:
             error_msg = f"❌ Failed to generate image {idx+1} for {product_name}: {e}"
-            print(error_msg)
+            logger.error(error_msg)
             errors.append(error_msg)
+            continue
 
+    # Log final results
+    logger.info(f"✅ Image generation complete: {len(generated_images)} successful, {len(errors)} failed")
+    
     status_message = (
         f"✅ Generated {len(generated_images)} {target_size} images using GPT-Image-1."
-        if generated_images else "❌ No images generated."
+        if generated_images else "❌ No images generated successfully."
     )
+    
+    if errors:
+        status_message += f" {len(errors)} generation(s) failed."
+    
     return {
         **state,
         "generated_images": generated_images,
         "current_step": "image_batch_generated",
         "messages": state.get("messages", []) + [
             AIMessage(content=status_message)
-        ] + [AIMessage(content=msg) for msg in errors]
+        ] + [AIMessage(content=msg) for msg in errors[:3]]  # Limit error messages
     }
 
 # === END NODE ===
 def end_processing(state: AgentState) -> AgentState:
-    print("🏁 Processing complete!")
+    logger.info("🏁 Processing complete!")
     if not state.get("session_id"):
         session_id = str(uuid.uuid4())
         state = {**state, "session_id": session_id}
@@ -429,7 +487,7 @@ def end_processing(state: AgentState) -> AgentState:
 
 # === INVALID UPLOAD NODE ===
 def invalid_upload(state: AgentState) -> AgentState:
-    print("🔄 Executing invalid_upload…")
+    logger.info("🔄 Executing invalid_upload…")
     return {
         **state,
         "current_step": "invalid_upload",
@@ -440,7 +498,7 @@ def invalid_upload(state: AgentState) -> AgentState:
 
 # === ROUTE DECISION ===
 def decide_next_step(state: AgentState) -> str:
-    print("🔄 Executing decide_next_step…")
+    logger.info("🔄 Executing decide_next_step…")
     current_step = state.get("current_step")
     if current_step == "images_validated":
         return "filter_valid_products"
@@ -453,7 +511,7 @@ def decide_next_step(state: AgentState) -> str:
 
 # === GRAPH BUILDER ===
 def build_product_only_agent():
-    print("🏗️ Building enhanced product-only agent with validation…")
+    logger.info("🏗️ Building enhanced product-only agent with validation…")
     graph = StateGraph(AgentState)
     
     # Add nodes
@@ -485,7 +543,7 @@ def build_product_only_agent():
     graph.add_edge("invalid_upload", "end_processing")
     graph.add_edge("end_processing", END)
 
-    print("✅ Enhanced product-only agent built successfully")
+    logger.info("✅ Enhanced product-only agent built successfully")
     return graph.compile()
 
 # === MAIN AGENT CLASS ===
@@ -498,7 +556,7 @@ class ContentAgent:
     def validate_images(self, image_data_list: List[Dict]) -> Dict:
         """Validate and categorize images without generating"""
         try:
-            print(f"🔄 Validating {len(image_data_list)} images…")
+            logger.info(f"🔄 Validating {len(image_data_list)} images…")
 
             initial_state = {
                 "messages": [HumanMessage(content="Validating images...")],
@@ -526,7 +584,7 @@ class ContentAgent:
             }
 
         except Exception as e:
-            print(f"❌ Validation failed: {str(e)}")
+            logger.error(f"❌ Validation failed: {str(e)}")
             return {
                 "success": False,
                 "error": f"Validation failed: {str(e)}",
@@ -537,10 +595,10 @@ class ContentAgent:
             }
 
     def process(self, image_data_list: List[Dict], generate_images: bool = True, image_size: str = "instagram") -> Dict:
-        """Main processing pipeline with enhanced validation"""
+        """Main processing pipeline with enhanced validation and error handling"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
-            print(f"🔄 Processing {len(image_data_list)} images (products only, target: {target_size})…")
+            logger.info(f"🔄 Processing {len(image_data_list)} images (products only, target: {target_size})…")
 
             initial_state = {
                 "messages": [HumanMessage(content="Processing product images...")],
@@ -550,6 +608,7 @@ class ContentAgent:
                 "current_step": "initialized"
             }
 
+            # Run the full pipeline
             final_state = self.agent.invoke(initial_state)
 
             # Handle cancellation gracefully
@@ -564,6 +623,7 @@ class ContentAgent:
                     "generated_images": []
                 }
 
+            # Build response
             result = {
                 "success": final_state.get("current_step") == "processing_complete",
                 "validation_results": final_state.get("validation_results", []),
@@ -579,6 +639,7 @@ class ContentAgent:
                 "messages": [msg.content for msg in final_state.get("messages", []) if hasattr(msg, 'content')]
             }
 
+            # Generate summary message
             num_products = len(result.get("products", []))
             num_images = len(result.get("generated_images", []))
             result["message"] = (
@@ -586,15 +647,16 @@ class ContentAgent:
                 + (f" and generated {num_images} enhanced {target_size} images (3 styles per product)" if num_images > 0 else "")
             )
 
+            # Add error message if processing failed
             if not result["success"]:
                 error_messages = [msg for msg in result["messages"] if "❌" in msg or "error" in msg.lower()]
                 result["error"] = error_messages[-1] if error_messages else "Processing failed"
 
-            print(f"✅ Product processing complete: {result['message']}")
+            logger.info(f"✅ Product processing complete: {result['message']}")
             return result
 
         except Exception as e:
-            print(f"❌ Product processing failed: {str(e)}")
+            logger.error(f"❌ Product processing failed: {str(e)}")
             return {
                 "success": False,
                 "error": f"Processing failed: {str(e)}",
@@ -606,10 +668,10 @@ class ContentAgent:
             }
 
     def generate_images(self, prompts: List[str], images_data: List[Dict], max_images: int = 3, image_size: str = "instagram") -> List[Dict]:
-        """Generate images using provided prompts and images"""
+        """Generate images using provided prompts and images with retry logic"""
         try:
             target_size = SIZE_MAPPING.get(image_size, "1080x1920")
-            print(f"🎨 Generating {target_size} images…")
+            logger.info(f"🎨 Generating {target_size} images…")
 
             prompt_image_pairs: List[dict] = []
             for i, prompt in enumerate(prompts[:max_images]):
@@ -631,7 +693,7 @@ class ContentAgent:
             return result_state.get("generated_images", [])
 
         except Exception as e:
-            print(f"❌ Image generation failed: {str(e)}")
+            logger.error(f"❌ Image generation failed: {str(e)}")
             return []
 
 # Singleton instance

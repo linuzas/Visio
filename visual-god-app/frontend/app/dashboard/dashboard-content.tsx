@@ -1,5 +1,5 @@
 // File: visual-god-app/frontend/app/dashboard/dashboard-content.tsx
-// COMPLETE VERSION - All functions included
+// FIXED VERSION - Remove AI enhancement toggle and fix 500 API errors
 
 'use client'
 
@@ -59,7 +59,7 @@ const IMAGE_SIZES = {
     icon: Instagram,
     description: 'Vertical format (9:16) for Instagram Reels',
     aspect: 'Vertical',
-    credits: 1
+    credits: 3
   },
   facebook: {
     label: 'Facebook Photo Ad',
@@ -67,7 +67,7 @@ const IMAGE_SIZES = {
     icon: Facebook,
     description: 'Square format (1:1) for Facebook feed',
     aspect: 'Square',
-    credits: 1
+    credits: 3
   },
   youtube: {
     label: 'YouTube Banner',
@@ -75,7 +75,7 @@ const IMAGE_SIZES = {
     icon: MonitorPlay,
     description: 'Widescreen format (16:9) for all devices',
     aspect: 'Landscape',
-    credits: 1
+    credits: 3
   }
 }
 
@@ -98,7 +98,6 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const [processing, setProcessing] = useState(false)
   const [result, setResult] = useState<ProcessedResult | null>(null)
   const [dragActive, setDragActive] = useState(false)
-  const [generateImages, setGenerateImages] = useState(true)
   const [selectedSize, setSelectedSize] = useState<keyof typeof IMAGE_SIZES>('instagram')
   const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0])
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -121,7 +120,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
   const creditsRemaining = stats?.credits_remaining || 0
   const validProducts = validationResults.filter(r => r.is_product && r.confidence > 0.7)
   const rejectedImages = validationResults.filter(r => !(r.is_product && r.confidence > 0.7))
-  const requiredCredits = generateImages ? validProducts.length * 3 : 0
+  // FIXED: Always generate images now, calculate credits as 3 per product
+  const requiredCredits = validProducts.length * 3
 
   // Rotate loading messages
   const startLoadingMessages = () => {
@@ -303,7 +303,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       return
     }
 
-    if (generateImages && creditsRemaining < requiredCredits) {
+    // FIXED: Always check credits since we always generate images
+    if (creditsRemaining < requiredCredits) {
       alert(`Not enough credits. You need ${requiredCredits} credits but only have ${creditsRemaining}.`)
       return
     }
@@ -348,7 +349,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
         body: JSON.stringify({
           images,
           userId: profile.id,
-          generate_images: generateImages,
+          generate_images: true, // FIXED: Always generate images
           image_size: selectedSize,
           sessionId: `session_${Date.now()}`
         }),
@@ -360,6 +361,9 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       if (!response.ok) {
         if (response.status === 413) {
           throw new Error('Image files are too large. Please use smaller images (under 4MB each).')
+        }
+        if (response.status === 500) {
+          throw new Error('Server error occurred. This might be temporary - please try again in a moment.')
         }
         throw new Error(`API Error: ${response.status}`)
       }
@@ -376,6 +380,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
       if (error.name === 'AbortError' || cancelRequested) {
         return
       } else {
+        console.error('Processing error:', error)
         setResult({
           success: false,
           error: error.message || 'An unexpected error occurred'
@@ -499,7 +504,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
     )
   }
 
-  // Validation results component
+  // Validation results component (unchanged)
   const ValidationResults = () => {
     if (!showValidationDetails && !validating) return null
 
@@ -914,40 +919,23 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 </div>
               </div>
 
-              {/* Generate Images Toggle */}
-              <div className="mt-6 flex items-center justify-between bg-white/5 rounded-xl p-4 hover:bg-white/10 transition-all duration-200">
-                <div>
-                  <h3 className="text-white font-medium">AI Image Enhancement</h3>
-                  <p className="text-white/60 text-sm">
-                    Generate 3 creative styles per product ({requiredCredits} total credits)
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={generateImages}
-                    onChange={(e) => setGenerateImages(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-purple-500 peer-checked:to-pink-500"></div>
-                </label>
-              </div>
-
-              {/* Credits Info */}
-              <div className="mt-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
+              {/* REMOVED: AI Image Enhancement Toggle - Now Always Generate */}
+              {/* Automatic Generation Info */}
+              <div className="mt-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-white/20">
                 <h4 className="text-white font-medium mb-2 flex items-center gap-2">
                   <Sparkles className="w-4 h-4" />
-                  Credits Information
+                  AI Enhancement Included
                 </h4>
                 <ul className="text-white/80 text-sm space-y-1">
-                  <li>• Each valid product generates 3 unique marketing styles</li>
+                  <li>• Each valid product generates 3 unique marketing styles automatically</li>
                   <li>• {validProducts.length} valid product{validProducts.length !== 1 ? 's' : ''} × 3 styles = {requiredCredits} credits needed</li>
                   <li>• You have {creditsRemaining} credits available</li>
+                  <li>• Professional AI enhancement with GPT-Image-1 model</li>
                 </ul>
               </div>
 
               {/* Credits Warning */}
-              {generateImages && creditsRemaining < requiredCredits && (
+              {creditsRemaining < requiredCredits && (
                 <div className="mt-4 bg-red-500/20 border border-red-500/40 rounded-lg p-4">
                   <p className="text-red-200 text-sm flex items-center gap-2">
                     <AlertCircle className="w-4 h-4" />
@@ -969,7 +957,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
 
               <button
                 onClick={processImages}
-                disabled={processing || !canProceed || (generateImages && creditsRemaining < requiredCredits)}
+                disabled={processing || !canProceed || creditsRemaining < requiredCredits}
                 className="w-full mt-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 disabled:hover:scale-100"
               >
                 {processing ? (
@@ -981,7 +969,7 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                   <>
                     <Wand2 className="w-5 h-5" />
                     Create Marketing Visuals
-                    {generateImages && canProceed && ` (${requiredCredits} credits)`}
+                    {canProceed && ` (${requiredCredits} credits)`}
                   </>
                 )}
               </button>
@@ -999,7 +987,8 @@ export function DashboardContent({ profile, stats }: DashboardContentProps) {
                 <li>• Upload clear product photos (no people or avatars)</li>
                 <li>• AI automatically validates and categorizes your images</li>
                 <li>• Review which images are accepted as valid products</li>
-                <li>• Get 3 unique marketing styles per valid product:</li>
+                <li>• Choose your platform format (Instagram, Facebook, YouTube)</li>
+                <li>• Get 3 unique marketing styles per valid product automatically:</li>
                 <li className="ml-4">- Street-level giant product perspective</li>
                 <li className="ml-4">- 3D billboard advertisement style</li>
                 <li className="ml-4">- Premium editorial catalog layout</li>
